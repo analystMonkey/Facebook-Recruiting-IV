@@ -1,25 +1,18 @@
-timeNumericFeatures <- function(bidderId, bidsDt, auctionsFeaturesList){
+timeNumericFeatures <- function(auctionId, bidsDt){
   
-  require("bit64")
+  auctionTimes <- bidsDt[auction == auctionId, .(bid_id, time)]  
+  setnames(auctionTimes, "time", "standardMadScore")
+  medianAuction <- median(auctionTimes[, standardMadScore])
+  meanAuction <- mean(auctionTimes[, standardMadScore])
+  madAuction <- mad(auctionTimes[, standardMadScore])
+  sdAuction <- sd(auctionTimes[, standardMadScore])
+  #Standard scores
+  auctionTimes$standardScore <- signif((auctionTimes[, standardMadScore] - meanAuction) / sdAuction, 5)    
+  auctionTimes$standardMadScore <- signif((auctionTimes[, standardMadScore] - medianAuction) / (madAuction * 1.4826), 5)  
+  #Rank scores
+  auctionTimes$SSRank <- round(rank(-auctionTimes$standardScore))
+  auctionTimes$SMSRank <- round(rank(-auctionTimes$standardMadScore))
   
-  bidderDt <- bidsDt[bidder_id == bidderId]
-  
-  if (nrow(bidderDt) > 0){
-    madTimes <- sapply(bidderDt$bid_id, function(bidId, auctionsList){
-      bidMedianFeatures <- auctionsList[[bidderDt[bid_id == bidId, auction]]]
-      if (bidMedianFeatures[2] != 0){
-        madScore <- signif((bidderDt[bid_id == bidId, time] - bidMedianFeatures[1]) / (bidMedianFeatures[2] * 1.4826), 4)
-      }else{
-        madScore <- 0
-      }  
-      return(madScore)
-    }, auctionsList = auctionsFeaturesList)
-    
-    return(list(c(min(madTimes, na.rm = TRUE), max(madTimes, na.rm = TRUE),
-                  mad(madTimes, na.rm = TRUE), quantile(madTimes, seq(0.05, 1, 0.05), na.rm = TRUE)), 
-                as.character(round(madTimes))))
-  }else{
-    return(list(rep(0, 23), "0"))
-  }
+  return(auctionTimes)
   
 }
