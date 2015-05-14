@@ -1,5 +1,5 @@
 #Facebook Recruiting IV: Human or Robot?
-#Ver. 0.0.10 #xboost and aplha search included
+#Ver. 0.0.12 #sequential auction features added
 #Libraries, directories, options and extra functions----------------------
 require("rjson")
 require("parallel")
@@ -10,7 +10,6 @@ require("leaps")
 require("tm")
 require('doParallel')
 require("glmnet")
-require("e1071")
 require("xgboost")
 require("SparseM")
 require("Metrics")
@@ -85,6 +84,8 @@ auctionsScoresTable <- do.call(rbind, auctionsScoresTable)
 
 #Merge standard scores with bids data
 bids <- merge(bids, auctionsScoresTable, by = "bid_id")
+#Orphan auctions / bids transform secuential value to FALSE
+bids$sequential[is.na(bids$sequential)] <- FALSE
 rm(auctionsScoresTable)
 
 #Create combined columns with the most representative coeficient rows
@@ -125,8 +126,14 @@ uniqueFeaturesTest <- mclapply(test$bidder_id, featureLengths, mc.cores = numCor
 #Create a sparse matrix with the numeric data
 uniqueFeaturesTrain <- Matrix(do.call(rbind, uniqueFeaturesTrain), sparse = TRUE)
 uniqueFeaturesTest <- Matrix(do.call(rbind, uniqueFeaturesTest), sparse = TRUE)
-colnames(uniqueFeaturesTrain) <- c("auction", "device", "country", "ip", "url")
-colnames(uniqueFeaturesTest) <- c("auction", "device", "country", "ip", "url")
+colnames(uniqueFeaturesTrain) <- c("auction", "device", "country", "ip", "url", 
+                                   "medianBidsPerAuction", "maxBidsPerAuction", "minBidsPerAuction", "madBidsPerAuction",
+                                   "medianBidsPerAuctionNoSeq", "maxBidsPerAuctionNoSeq", "minBidsPerAuctionNoSeq", "madBidsPerAuctionNoSeq",
+                                   "sumSequentials", "sumNonSequentials")
+colnames(uniqueFeaturesTest) <- c("auction", "device", "country", "ip", "url", 
+                                  "medianBidsPerAuction", "maxBidsPerAuction", "minBidsPerAuction", "madBidsPerAuction",
+                                  "medianBidsPerAuctionNoSeq", "maxBidsPerAuctionNoSeq", "minBidsPerAuctionNoSeq", "madBidsPerAuctionNoSeq",
+                                  "sumSequentials", "sumNonSequentials")
 
 inherits(uniqueFeaturesTrain,"sparseMatrix")
 inherits(uniqueFeaturesTest,"sparseMatrix")
@@ -177,12 +184,32 @@ bestFeaturesNumeric <- colnames(numericTimeFeaturesTrain)[colnames(numericTimeFe
   
 #Text processing / sparse matrix creation-------------
 #Use TM Package to create corpus with TfIdf
-corpusSparse <- removeSparseTerms(weightTfIdf(DocumentTermMatrix
-                                              (Corpus(VectorSource(c(boilerplateTrain, boilerplateTest)))), normalize = TRUE),
-                                  sparse = 0.9995)
-#Use TM Package to create corpus cosine distance
-# corpusSparse <- removeSparseTerms(cosine(DocumentTermMatrix
+# corpusSparse <- removeSparseTerms(weightTfIdf(DocumentTermMatrix
+#                                               (Corpus(VectorSource(c(boilerplateTrain, boilerplateTest)))), normalize = TRUE),
+#                                   sparse = 0.9995)
+#Use TM Package to create corpus with SMART weighting - tf-prob(idf)-n
+# corpusSparse <- removeSparseTerms(weightSMART(DocumentTermMatrix
+#                                               (Corpus(VectorSource(c(boilerplateTrain, boilerplateTest)))), spec = "npn"),
+#                                   sparse = 0.9995)
+#Use TM Package to create corpus with SMART weighting - tf-prob(idf)-c
+# corpusSparse <- removeSparseTerms(weightSMART(DocumentTermMatrix
+#                                               (Corpus(VectorSource(c(boilerplateTrain, boilerplateTest)))), spec = "npc"),
+#                                   sparse = 0.9995)
+#Use TM Package to create corpus with binary weighting
+# corpusSparse <- removeSparseTerms(weightBin(DocumentTermMatrix
 #                                               (Corpus(VectorSource(c(boilerplateTrain, boilerplateTest))))),
+#                                   sparse = 0.9995)
+#Use TM Package to create corpus with SMART weighting - b-n-cos
+# corpusSparse <- removeSparseTerms(weightSMART(DocumentTermMatrix
+#                                               (Corpus(VectorSource(c(boilerplateTrain, boilerplateTest)))), spec = "bnc"),
+#                                   sparse = 0.9995)
+#Use TM Package to create corpus with SMART weighting - b-idf-n
+# corpusSparse <- removeSparseTerms(weightSMART(DocumentTermMatrix
+#                                               (Corpus(VectorSource(c(boilerplateTrain, boilerplateTest)))), spec = "btn"),
+#                                   sparse = 0.9995)
+#Use TM Package to create corpus with SMART weighting - b-idf-cos
+# corpusSparse <- removeSparseTerms(weightSMART(DocumentTermMatrix
+#                                               (Corpus(VectorSource(c(boilerplateTrain, boilerplateTest)))), spec = "btn"),
 #                                   sparse = 0.9995)
 #Use FeatureHashing to create a hashed sparse matrix
 # corpusSparse <- hashed.model.matrix(~., data = as.data.frame(rbind(boilerplateTrain, boilerplateTest)),
@@ -279,7 +306,7 @@ registerDoParallel(numCores)
 # dataSplits <- split(seq(1, nrow(corpusSparseTrain)), as.factor(groupsVector))
 
 #Elastic Net alpha values validation
-alphaValues2Test <- seq(0.52, 0.96, 0.04)
+alphaValues2Test <- seq(0.1, 0.95, 0.05)
 numberOfRepeatedModels <- 5
 
 holdoutAucScores <- sapply(alphaValues2Test, function(alphaValue){
@@ -355,24 +382,59 @@ DMMatrixTrain <- xgb.DMatrix(data = combinedCorpusSparseTrain, label = train$out
 DMMatrixTest <- xgb.DMatrix(data = combinedCorpusSparseTest)
 
 #Cross validation
-xgboostModelCV <- xgb.cv(data = DMMatrixTrain, nrounds = 50, nfold = 5, showsd = TRUE, 
-                         metrics = "auc", verbose = TRUE, 
-                         "objective" = "binary:logistic", "max.depth" = 300, 
-                         "nthread" = numCores, "max_delta_step" = 1)
+numberOfRepeatedModels <- 5
+xgboostAUC <- sapply(seq(1, numberOfRepeatedModels), function(modelNumber, train){
 
-#xgboost cross validation plot
-holdoutAucScores <- as.data.frame(xgboostModelCV)
-holdoutAucScores$test.auc.mean <- as.numeric(holdoutAucScores$test.auc.mean)
+  xgboostModelCV <- xgb.cv(data = train, nrounds = 50, nfold = 5, showsd = TRUE, 
+                           metrics = "auc", verbose = TRUE, 
+                           "objective" = "binary:logistic", "max.depth" = 300, 
+                           "nthread" = numCores, "max_delta_step" = 1)
+  
+  #Plot the progress of the model
+  holdoutAucScores <- as.data.frame(xgboostModelCV)
+  holdoutAucScores$test.auc.mean <- as.numeric(holdoutAucScores$test.auc.mean)
+  holdoutAucScores$iteration <- seq(1, nrow(holdoutAucScores))
+  print(ggplot(data = holdoutAucScores, aes(x = iteration, y = test.auc.mean)) + geom_line())
+  
+  #Save AUC and the location of the best iteration
+  auc <- max(as.numeric(holdoutAucScores$test.auc.mean))
+  bestIter <- which.max(as.numeric(holdoutAucScores$test.auc.mean))
+  
+  print(paste0("model number ", modelNumber, " has an AUC of: ", auc))
+  return(c(auc, bestIter, as.numeric(holdoutAucScores$test.auc.mean)))
+  
+}, train = DMMatrixTrain)
+
+print(paste0("average AUC of ",  mean(xgboostAUC[1, ]), " with ", numberOfRepeatedModels, " models."))
+bestIteration <- floor(mean(xgboostAUC[2, ]))
+
+#xgboost cross validation plot with n models
+holdoutAucScores <- as.data.frame(xgboostAUC[3:nrow(xgboostAUC), ])
 holdoutAucScores$iteration <- seq(1, nrow(holdoutAucScores))
-ggplot(data = holdoutAucScores, aes(x = iteration, y = test.auc.mean)) + geom_lines()
+ggplot() + geom_line(data = holdoutAucScores, aes(x = iteration, y = V1), colour = 'red') +
+  geom_line(data = holdoutAucScores, aes(x = iteration, y = V2), colour = 'blue') + 
+  geom_line(data = holdoutAucScores, aes(x = iteration, y = V3), colour = 'magenta') +
+  geom_line(data = holdoutAucScores, aes(x = iteration, y = V4), colour = 'green') +
+  geom_line(data = holdoutAucScores, aes(x = iteration, y = V5), colour = 'black')
+  
+#Full xgboost model
+numberOfRepeatedModels <- 5
+xgboostMultiPredictions <- sapply(seq(1, numberOfRepeatedModels), function(modelNumber, iter, train, test){
+  
+  xgboostModel <- xgboost(data = train, nrounds = iter,
+                          showsd = TRUE, metrics = "auc", verbose = TRUE, 
+                          "objective" = "binary:logistic", "max.depth" = 300, "nthread" = numCores,
+                          "max_delta_step" = 1)
+  
+  #Predict
+  xgboostPrediction <- predict(xgboostModel, test)
+  print(paste0("model number ", modelNumber, " processed"))
+  rm(xgboostModel)
+  return(xgboostPrediction)
+  
+}, iter = bestIteration, train = DMMatrixTrain, test = DMMatrixTest)
 
-xgboostModel <- xgboost(data = DMMatrixTrain, nrounds =  which.max(holdoutAucScores$test.auc.mean) + 5,
-                        showsd = TRUE, metrics = "auc", verbose = TRUE, 
-                        "objective" = "binary:logistic", "max.depth" = 300, "nthread" = numCores,
-                        "max_delta_step" = 1)
-
-#Predict
-xgboostPrediction <- predict(xgboostModel, DMMatrixTest)
+xgboostPrediction <- apply(xgboostMultiPredictions, 1, mean)
 
 ##Vowpal Wabbit
 #vw hypersearch
