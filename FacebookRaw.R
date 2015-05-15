@@ -1,5 +1,5 @@
 #Facebook Recruiting IV: Human or Robot?
-#Ver. 0.0.12 #sequential auction features added
+#Ver. 0.1.1 #sequential auction features added + modeling with all posible weighting combinations
 #Libraries, directories, options and extra functions----------------------
 require("rjson")
 require("parallel")
@@ -50,6 +50,9 @@ bids <- fread(file.path(dataDirectory, directories$bids), verbose = TRUE)
 #Remove training data that cannot be found in the bids data table
 train <- train[train$bidder_id %in% bids$bidder_id]
 
+#Sort bids by time
+bids <- bids[order(rank(-time))]
+
 # #Make weights
 # train$weights21 <- rep(0, nrow(train))
 # train$weights31 <- rep(0, nrow(train)) 
@@ -92,9 +95,6 @@ rm(auctionsScoresTable)
 bids$IPUrl <- paste(bids$ip, bids$url, sep = "_")
 #bids$URLAuction <- paste(bids$url, bids$auction, sep = "_")
 #bids$IPAuction <- paste(bids$auction, bids$ip, sep = "_")
-
-#Sort by time
-bids <- bids[order(rank(-time))]
 
 #save(bids, file = "bidsExtraFeatures.RData")
 
@@ -150,19 +150,6 @@ boilerplateTest <- do.call(c, boilerplateTest)
 
 rm(bids)
 
-#Vowpal Wabbit file preparation--------------------------------------
-#Vowpal Wabbit Train File
-vowpalWabbitTextTrain <- lapply(train$bidder_id, bidderId2vw, bidsDT = bids, trainDt = train)
-vowpalWabbitTextTrain <- do.call(rbind, vowpalWabbitTextTrain)
-write.table(vowpalWabbitTextTrain, file = file.path(dataDirectory, "vw", "facebookTrain.vw"), 
-            eol = "\n", row.names = FALSE, col.names = FALSE, quote = FALSE)
-
-#Vowpal Wabbit Test File
-vowpalWabbitTextTest <- lapply(test$bidder_id, bidderId2vw, bidsDT = bids, trainDt = test, train = FALSE)
-vowpalWabbitTextTest <- do.call(rbind, vowpalWabbitTextTest)
-write.table(vowpalWabbitTextTest, file = file.path(dataDirectory, "vw", "facebookTest.vw"),
-            eol = "\n", row.names = FALSE, col.names = FALSE, quote = FALSE)
-
 #EDA #1 Best Unique and dispersion features--------------------------
 numericData <- as.matrix(scale(cbind(uniqueFeaturesTrain, numericTimeFeaturesTrain)))
 
@@ -208,9 +195,9 @@ bestFeaturesNumeric <- colnames(numericTimeFeaturesTrain)[colnames(numericTimeFe
 #                                               (Corpus(VectorSource(c(boilerplateTrain, boilerplateTest)))), spec = "btn"),
 #                                   sparse = 0.9995)
 #Use TM Package to create corpus with SMART weighting - b-idf-cos
-# corpusSparse <- removeSparseTerms(weightSMART(DocumentTermMatrix
-#                                               (Corpus(VectorSource(c(boilerplateTrain, boilerplateTest)))), spec = "btn"),
-#                                   sparse = 0.9995)
+corpusSparse <- removeSparseTerms(weightSMART(DocumentTermMatrix
+                                              (Corpus(VectorSource(c(boilerplateTrain, boilerplateTest)))), spec = "btn"),
+                                  sparse = 0.9995)
 #Use FeatureHashing to create a hashed sparse matrix
 # corpusSparse <- hashed.model.matrix(~., data = as.data.frame(rbind(boilerplateTrain, boilerplateTest)),
 #                                     hash.size = 2^28, transpose=FALSE)
@@ -385,7 +372,7 @@ DMMatrixTest <- xgb.DMatrix(data = combinedCorpusSparseTest)
 numberOfRepeatedModels <- 5
 xgboostAUC <- sapply(seq(1, numberOfRepeatedModels), function(modelNumber, train){
 
-  xgboostModelCV <- xgb.cv(data = train, nrounds = 50, nfold = 5, showsd = TRUE, 
+  xgboostModelCV <- xgb.cv(data = train, nrounds = 60, nfold = 5, showsd = TRUE, 
                            metrics = "auc", verbose = TRUE, 
                            "objective" = "binary:logistic", "max.depth" = 300, 
                            "nthread" = numCores, "max_delta_step" = 1)
@@ -421,7 +408,7 @@ ggplot() + geom_line(data = holdoutAucScores, aes(x = iteration, y = V1), colour
 numberOfRepeatedModels <- 5
 xgboostMultiPredictions <- sapply(seq(1, numberOfRepeatedModels), function(modelNumber, iter, train, test){
   
-  xgboostModel <- xgboost(data = train, nrounds = iter,
+  xgboostModel <- xgboost(data = train, nrounds = iter + 10,
                           showsd = TRUE, metrics = "auc", verbose = TRUE, 
                           "objective" = "binary:logistic", "max.depth" = 300, "nthread" = numCores,
                           "max_delta_step" = 1)
@@ -435,31 +422,6 @@ xgboostMultiPredictions <- sapply(seq(1, numberOfRepeatedModels), function(model
 }, iter = bestIteration, train = DMMatrixTrain, test = DMMatrixTest)
 
 xgboostPrediction <- apply(xgboostMultiPredictions, 1, mean)
-
-##Vowpal Wabbit
-#vw hypersearch
-# for a logistic loss train-set:
-system(paste0(hipersearchScriptLoc, 'vw-hypersearch -L 0.001 10 vw --loss_function logistic --learning_rate % ',
-              vwDataDirectory, '/facebookTrain.vw -b 28'))
-#Train Data
-system(paste0(vw77Dir, 'vw -d ', vwDataDirectory, '/facebookTrain.vw -f ', vwDataDirectory,
-              'baselineModelLRate.vw --loss_function logistic -b 28 --learning_rate 0.808174'))
-#Test Data
-system(paste0(vw77Dir, 'vw -d ', vwDataDirectory, '/facebookTest.vw -t -i ', vwDataDirectory, 
-              'baselineModelLRate.vw -p ', vwDataDirectory, 'testBaselineModelLRate.txt'))
-
-#Read output vw .txt - Transform to probabilities
-Vw2csv <- function(fileName){
-  require("e1071")  
-  predictionsvw <- read.table(paste0(vwDataDirectory, fileName))
-  print(paste0("file read: ", vwDataDirectory, fileName))  
-  predictionsvw <- signif(sigmoid(predictionsvw[, 1]), digits = 4)
-  write.csv(predictionsvw, file = paste0(dataDirectory, gsub(".txt", "", fileName), ".csv"), row.names = FALSE)
-  print(paste0("file written: ", dataDirectory, gsub(".txt", "", fileName), ".csv"))
-  return(TRUE)
-}
-#Transformatio to probabilities
-transformedVw <- sapply(vwPredictions2Transform, Vw2csv)
 
 #Make a submission file------------------
 #Read the sample file
@@ -476,8 +438,8 @@ system('zip GLMNETElasticNetBagOWordsTfIdfXIV.zip GLMNETElasticNetBagOWordsTfIdf
 sampleSubmissionFile$prediction <- xgboostPrediction
 
 #Write File
-write.csv(sampleSubmissionFile, file = "xgboostBagOWordsCombTfIdfII.csv", row.names = FALSE)
-system('zip xgboostBagOWordsCombTfIdfII.zip xgboostBagOWordsCombTfIdfII.csv')
+write.csv(sampleSubmissionFile, file = "xgboostTfIdfIII.csv", row.names = FALSE)
+system('zip xgboostTfIdfIII.zip xgboostTfIdfIII.csv')
 
 #Combined submission
 sampleSubmissionFile$prediction <- apply(cbind(apply(predictionsGLMNET, 1, mean), xgboostPrediction), 1, mean)
