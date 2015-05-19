@@ -6,7 +6,7 @@ bidderId2Boilerplate <- function(bidderId, bidsDT, ngrams = 1){
   require("ngram")
   
   bidderDf <- as.data.frame(bidsDT[bidder_id == bidderId, .(auction, merchandise, device, country, 
-                                                            ip, url, SSRank, SMSRank)])
+                                                            ip, url, IPUrl)])
   
   featureNames <- names(bidderDf)
     

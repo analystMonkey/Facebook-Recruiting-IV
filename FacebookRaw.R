@@ -1,12 +1,11 @@
 #Facebook Recruiting IV: Human or Robot?
-#Ver. 0.1.1 #sequential auction features added + modeling with all posible weighting combinations
+#Ver. 0.1.3 #Unnecesary data removed
 #Libraries, directories, options and extra functions----------------------
 require("rjson")
 require("parallel")
 require("data.table")
 require("bit64")
 require("leaps")
-#require("FeatureHashing")
 require("tm")
 require('doParallel')
 require("glmnet")
@@ -37,7 +36,7 @@ source(file.path(workingDirectory, "bidderId2Boilerplate.R"))
 source(file.path(workingDirectory, "timeNumericFeatures.R"))
 source(file.path(workingDirectory, "featureLengths.R"))
 source(file.path(workingDirectory, "dispersionTimeFeatures.R"))
-source(file.path(workingDirectory, "bidderId2vw.R"))
+#source(file.path(workingDirectory, "bidsTimeFrequency.R"))
 
 #Detect available cores
 numCores <- detectCores()
@@ -52,29 +51,6 @@ train <- train[train$bidder_id %in% bids$bidder_id]
 
 #Sort bids by time
 bids <- bids[order(rank(-time))]
-
-# #Make weights
-# train$weights21 <- rep(0, nrow(train))
-# train$weights31 <- rep(0, nrow(train)) 
-# train$weights41 <- rep(0, nrow(train)) 
-# 
-# #Extract 2:1 weights
-# minorityClassWeights <- 2 / table(train$outcome)[2]
-# majorityClassWeights <- 1 / table(train$outcome)[1]
-# train$weights21[train$outcome == 1] <- minorityClassWeights
-# train$weights21[train$outcome == 0] <- majorityClassWeights
-# 
-# #Extract 3:1 weights
-# minorityClassWeights <- 3 / table(train$outcome)[2]
-# majorityClassWeights <- 1 / table(train$outcome)[1]
-# train$weights31[train$outcome == 1] <- minorityClassWeights
-# train$weights31[train$outcome == 0] <- majorityClassWeights
-# 
-# #Extract 4:1 weights
-# minorityClassWeights <- 4 / table(train$outcome)[2]
-# majorityClassWeights <- 1 / table(train$outcome)[1]
-# train$weights41[train$outcome == 1] <- minorityClassWeights
-# train$weights41[train$outcome == 0] <- majorityClassWeights
 
 #No Country change to "NoCountry" string
 bids$country[bids$country == ""] <- "NoCountry"
@@ -92,11 +68,28 @@ bids$sequential[is.na(bids$sequential)] <- FALSE
 rm(auctionsScoresTable)
 
 #Create combined columns with the most representative coeficient rows
-bids$IPUrl <- paste(bids$ip, bids$url, sep = "_")
+#bids$IPUrl <- paste(bids$ip, bids$url, sep = "_")
 #bids$URLAuction <- paste(bids$url, bids$auction, sep = "_")
 #bids$IPAuction <- paste(bids$auction, bids$ip, sep = "_")
 
 #save(bids, file = "bidsExtraFeatures.RData")
+
+# #Extract time frequencies from training/test 
+# freqTimeFeaturesTrain <- mclapply(train$bidder_id, bidsTimeFrequency, mc.cores = numCores,
+#                                  bidsDT = bids)
+# freqTimeFeaturesTest <- mclapply(test$bidder_id, bidsTimeFrequency, mc.cores = numCores,
+#                                 bidsDT = bids)
+# 
+# #Create a sparse matrix with the numeric data
+# freqTimeFeaturesTrain <- Matrix(do.call(rbind, freqTimeFeaturesTrain), sparse = TRUE)
+# freqTimeFeaturesTest <- Matrix(do.call(rbind, freqTimeFeaturesTest), sparse = TRUE)
+# colnames(freqTimeFeaturesTrain) <- c("frequencyMedian", "frequencyMad", "frequencyQuantiles", 
+#                                      "frequencyMedian30", "frequencyMad30", "frequencyQuantiles30")
+# colnames(freqTimeFeaturesTest) <- c("frequencyMedian", "frequencyMad", "frequencyQuantiles", 
+#                                     "frequencyMedian30", "frequencyMad30", "frequencyQuantiles30")
+# 
+# inherits(freqTimeFeaturesTrain,"sparseMatrix")
+# inherits(freqTimeFeaturesTest,"sparseMatrix")
 
 #Extract training/test time data and create a table with that data
 numericTimeFeaturesTrain <- mclapply(train$bidder_id, dispersionTimeFeatures, mc.cores = numCores,
@@ -107,12 +100,14 @@ numericTimeFeaturesTest <- mclapply(test$bidder_id, dispersionTimeFeatures, mc.c
 #Create a sparse matrix with the numeric data
 numericTimeFeaturesTrain <- Matrix(do.call(rbind, numericTimeFeaturesTrain), sparse = TRUE)
 numericTimeFeaturesTest <- Matrix(do.call(rbind, numericTimeFeaturesTest), sparse = TRUE)
-colnames(numericTimeFeaturesTrain) <- c("minimumMad", "minimumSd", "maximumMad", 
-                                        "maximumSd", "medianMad", "medianSd", 
-                                        "medianAverageDeviationTimeMad", "medianAverageDeviationTimeSd")
-colnames(numericTimeFeaturesTest) <- c("minimumMad", "minimumSd", "maximumMad", 
-                                       "maximumSd", "medianMad", "medianSd", 
-                                       "medianAverageDeviationTimeMad", "medianAverageDeviationTimeSd")
+colnames(numericTimeFeaturesTrain) <- c("minimumMad", "minimumSd", "minimumRank", "minimumMadRank",
+                                        "maximumMad", "maximumSd", "maximumRank", "maximumMadRank",
+                                        "medianMad", "medianSd", "medianRank", "medianMadRank",
+                                        "medianAverageDeviationTimeMad", "medianAverageDeviationTimeSd", "madRank", "madMadRank")
+colnames(numericTimeFeaturesTest) <- c("minimumMad", "minimumSd", "minimumRank", "minimumMadRank",
+                                       "maximumMad", "maximumSd", "maximumRank", "maximumMadRank",
+                                       "medianMad", "medianSd", "medianRank", "medianMadRank",
+                                       "medianAverageDeviationTimeMad", "medianAverageDeviationTimeSd", "madRank", "madMadRank")
 
 inherits(numericTimeFeaturesTrain,"sparseMatrix")
 inherits(numericTimeFeaturesTest,"sparseMatrix")
@@ -183,9 +178,9 @@ bestFeaturesNumeric <- colnames(numericTimeFeaturesTrain)[colnames(numericTimeFe
 #                                               (Corpus(VectorSource(c(boilerplateTrain, boilerplateTest)))), spec = "npc"),
 #                                   sparse = 0.9995)
 #Use TM Package to create corpus with binary weighting
-# corpusSparse <- removeSparseTerms(weightBin(DocumentTermMatrix
-#                                               (Corpus(VectorSource(c(boilerplateTrain, boilerplateTest))))),
-#                                   sparse = 0.9995)
+corpusSparse <- removeSparseTerms(weightBin(DocumentTermMatrix
+                                              (Corpus(VectorSource(c(boilerplateTrain, boilerplateTest))))),
+                                  sparse = 0.9995)
 #Use TM Package to create corpus with SMART weighting - b-n-cos
 # corpusSparse <- removeSparseTerms(weightSMART(DocumentTermMatrix
 #                                               (Corpus(VectorSource(c(boilerplateTrain, boilerplateTest)))), spec = "bnc"),
@@ -195,12 +190,9 @@ bestFeaturesNumeric <- colnames(numericTimeFeaturesTrain)[colnames(numericTimeFe
 #                                               (Corpus(VectorSource(c(boilerplateTrain, boilerplateTest)))), spec = "btn"),
 #                                   sparse = 0.9995)
 #Use TM Package to create corpus with SMART weighting - b-idf-cos
-corpusSparse <- removeSparseTerms(weightSMART(DocumentTermMatrix
-                                              (Corpus(VectorSource(c(boilerplateTrain, boilerplateTest)))), spec = "btn"),
-                                  sparse = 0.9995)
-#Use FeatureHashing to create a hashed sparse matrix
-# corpusSparse <- hashed.model.matrix(~., data = as.data.frame(rbind(boilerplateTrain, boilerplateTest)),
-#                                     hash.size = 2^28, transpose=FALSE)
+# corpusSparse <- removeSparseTerms(weightSMART(DocumentTermMatrix
+#                                               (Corpus(VectorSource(c(boilerplateTrain, boilerplateTest)))), spec = "btn"),
+#                                   sparse = 0.9995)
 
 modelTerms <- corpusSparse$dimnames$Terms
 
@@ -237,7 +229,6 @@ alphaVsAucPlots <- lapply(seq(1, randomOrderModels), function(modelNumber){
     #10 fold CV with glmnet
     GLMNETModelCV <- cv.glmnet(x = corpusSparseTrain[randomIndexOrder, ], 
                                y = as.factor(train$outcome)[randomIndexOrder], 
-                               #weights = train$weights21[randomIndexOrder],
                                nfolds = 5, parallel = TRUE, family = "binomial",
                                standardize = FALSE, alpha = alphaValue, type.measure = "auc")
     
@@ -307,7 +298,6 @@ holdoutAucScores <- sapply(alphaValues2Test, function(alphaValue){
     #10 fold CV with glmnet
     GLMNETModelCV <- cv.glmnet(x = corpusSparseTrain[randomIndexOrder, ], 
                                y = as.factor(train$outcome)[randomIndexOrder], 
-                               #weights = train$weights21[randomIndexOrder],
                                nfolds = 5, parallel = TRUE, family = "binomial",
                                standardize = FALSE, alpha = alphaValue, type.measure = "auc")
     
@@ -345,7 +335,6 @@ predictionsGLMNET <- sapply(seq(1, numberOfRepeatedModels), function(modelNumber
   #10 fold CV with glmnet
   GLMNETModelCV <- cv.glmnet(x = corpusSparseTrain[randomIndexOrder, ], 
                              y = as.factor(train$outcome)[randomIndexOrder], 
-                             #weights = train$weights21[randomIndexOrder],                                 
                              nfolds = 5, parallel = TRUE, family = "binomial",
                              standardize = FALSE, alpha = bestAlpha, type.measure = "auc")
   
@@ -375,7 +364,7 @@ xgboostAUC <- sapply(seq(1, numberOfRepeatedModels), function(modelNumber, train
   xgboostModelCV <- xgb.cv(data = train, nrounds = 60, nfold = 5, showsd = TRUE, 
                            metrics = "auc", verbose = TRUE, 
                            "objective" = "binary:logistic", "max.depth" = 300, 
-                           "nthread" = numCores, "max_delta_step" = 1)
+                           "nthread" = numCores, "max_delta_step" = 1, "set.seed" = modelNumber)
   
   #Plot the progress of the model
   holdoutAucScores <- as.data.frame(xgboostModelCV)
@@ -411,7 +400,16 @@ xgboostMultiPredictions <- sapply(seq(1, numberOfRepeatedModels), function(model
   xgboostModel <- xgboost(data = train, nrounds = iter + 10,
                           showsd = TRUE, metrics = "auc", verbose = TRUE, 
                           "objective" = "binary:logistic", "max.depth" = 300, "nthread" = numCores,
-                          "max_delta_step" = 1)
+                          "max_delta_step" = 1, "set.seed" = modelNumber)
+  
+  model <- xgb.dump(xgboostModel, with.stats = T)
+  model[1:10]
+  
+  #Plot feature importance  
+  # Compute feature importance matrix
+  #importance_matrix <- xgb.importance(modelTerms, model = xgboostModel)  
+  #Importance graph
+  #xgb.plot.importance(importance_matrix[1:10,])
   
   #Predict
   xgboostPrediction <- predict(xgboostModel, test)
@@ -438,8 +436,8 @@ system('zip GLMNETElasticNetBagOWordsTfIdfXIV.zip GLMNETElasticNetBagOWordsTfIdf
 sampleSubmissionFile$prediction <- xgboostPrediction
 
 #Write File
-write.csv(sampleSubmissionFile, file = "xgboostTfIdfIII.csv", row.names = FALSE)
-system('zip xgboostTfIdfIII.zip xgboostTfIdfIII.csv')
+write.csv(sampleSubmissionFile, file = "xgboostTfIdfIV.csv", row.names = FALSE)
+system('zip xgboostTfIdfIV.zip xgboostTfIdfIV.csv')
 
 #Combined submission
 sampleSubmissionFile$prediction <- apply(cbind(apply(predictionsGLMNET, 1, mean), xgboostPrediction), 1, mean)
