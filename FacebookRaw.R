@@ -1,5 +1,5 @@
 #Facebook Recruiting IV: Human or Robot?
-#Ver. 0.1.3 #Unnecesary data removed
+#Ver. 0.1.4 #Simultaneous data extraction included
 #Libraries, directories, options and extra functions----------------------
 require("rjson")
 require("parallel")
@@ -36,7 +36,10 @@ source(file.path(workingDirectory, "bidderId2Boilerplate.R"))
 source(file.path(workingDirectory, "timeNumericFeatures.R"))
 source(file.path(workingDirectory, "featureLengths.R"))
 source(file.path(workingDirectory, "dispersionTimeFeatures.R"))
+source(file.path(workingDirectory, "simultaneousAuctionTimeFinder.R"))
 #source(file.path(workingDirectory, "bidsTimeFrequency.R"))
+source(file.path(workingDirectory, "multiplot.R"))
+
 
 #Detect available cores
 numCores <- detectCores()
@@ -48,6 +51,8 @@ bids <- fread(file.path(dataDirectory, directories$bids), verbose = TRUE)
 
 #Remove training data that cannot be found in the bids data table
 train <- train[train$bidder_id %in% bids$bidder_id]
+validTestDocuments <- which(test$bidder_id %in% bids$bidder_id)
+test <- test[test$bidder_id %in% bids$bidder_id]
 
 #Sort bids by time
 bids <- bids[order(rank(-time))]
@@ -95,7 +100,7 @@ rm(auctionsScoresTable)
 numericTimeFeaturesTrain <- mclapply(train$bidder_id, dispersionTimeFeatures, mc.cores = numCores,
                                      bidsDT = bids, trainDt = train)
 numericTimeFeaturesTest <- mclapply(test$bidder_id, dispersionTimeFeatures, mc.cores = numCores,
-                                     bidsDT = bids, trainDt = test)
+                                    bidsDT = bids, trainDt = test)
 
 #Create a sparse matrix with the numeric data
 numericTimeFeaturesTrain <- Matrix(do.call(rbind, numericTimeFeaturesTrain), sparse = TRUE)
@@ -114,9 +119,9 @@ inherits(numericTimeFeaturesTest,"sparseMatrix")
 
 #Extract training/test unique data
 uniqueFeaturesTrain <- mclapply(train$bidder_id, featureLengths, mc.cores = numCores,
-                                     bidsDT = bids, ngrams = 1)
+                                bidsDT = bids, ngrams = 1)
 uniqueFeaturesTest <- mclapply(test$bidder_id, featureLengths, mc.cores = numCores,
-                                     bidsDT = bids, ngrams = 1)
+                               bidsDT = bids, ngrams = 1)
 
 #Create a sparse matrix with the numeric data
 uniqueFeaturesTrain <- Matrix(do.call(rbind, uniqueFeaturesTrain), sparse = TRUE)
@@ -133,6 +138,25 @@ colnames(uniqueFeaturesTest) <- c("auction", "device", "country", "ip", "url",
 inherits(uniqueFeaturesTrain,"sparseMatrix")
 inherits(uniqueFeaturesTest,"sparseMatrix")
 
+#Extract simultaneous bids data
+simultaneousFeaturesTrain <- mclapply(train$bidder_id, simultaneousAuctionTimeFinder, mc.cores = numCores,
+                                      bidsDt = bidsDtSearch, range = 10000)
+simultaneousFeaturesTest <- mclapply(test$bidder_id, simultaneousAuctionTimeFinder, mc.cores = numCores,
+                                     bidsDt = bidsDtSearch, range = 10000)
+
+#Create a sparse matrix with the numeric data
+simultaneousFeaturesTrain <- Matrix(do.call(rbind, simultaneousFeaturesTrain), sparse = TRUE)
+simultaneousFeaturesTest <- Matrix(do.call(rbind, simultaneousFeaturesTest), sparse = TRUE)
+colnames(simultaneousFeaturesTrain) <- c("simultaneousBids", "simultaneousBidsNormalized", 
+                                         "simultaneousBidsPerAuction", "simultaneousBidsDispersion",
+                                         "simultaneousBidsMedian")
+colnames(simultaneousFeaturesTest) <- c("simultaneousBids", "simultaneousBidsNormalized", 
+                                        "simultaneousBidsPerAuction", "simultaneousBidsDispersion",
+                                        "simultaneousBidsMedian")
+
+inherits(simultaneousFeaturesTrain,"sparseMatrix")
+inherits(simultaneousFeaturesTest,"sparseMatrix")
+
 #Transform training/test data and bidders data into a boilerplate
 boilerplateTrain <- mclapply(train$bidder_id, bidderId2Boilerplate, mc.cores = numCores,
                              bidsDT = bids, ngrams = 1)
@@ -146,7 +170,7 @@ boilerplateTest <- do.call(c, boilerplateTest)
 rm(bids)
 
 #EDA #1 Best Unique and dispersion features--------------------------
-numericData <- as.matrix(scale(cbind(uniqueFeaturesTrain, numericTimeFeaturesTrain)))
+numericData <- as.matrix(scale(cbind(uniqueFeaturesTrain, numericTimeFeaturesTrain, simultaneousFeaturesTrain)))
 
 linearBestModels <- regsubsets(x = numericData, y = as.factor(train$outcome), 
                                method = "forward", nvmax = 20)
@@ -163,7 +187,62 @@ bestFeatures <- names(sort(apply(predictors1[, -1], 2, sum), decreasing = TRUE)[
 
 bestFeaturesUnique <- colnames(uniqueFeaturesTrain)[colnames(uniqueFeaturesTrain) %in% bestFeatures]
 bestFeaturesNumeric <- colnames(numericTimeFeaturesTrain)[colnames(numericTimeFeaturesTrain) %in% bestFeatures]
+
+#EDA #2 Bidder auction vs. time plot--------------------------
+#define plotting function 
+set.seed(1000005)
+randomHumans <- train$bidder_id[sample(which(train$outcome == 0), 6)]
+set.seed(1000005)
+randomRobots <- train$bidder_id[sample(which(train$outcome == 1), 6)]
+
+#Plotting function
+plotAuctions <- function(bidder, bidsDt){  
+  bidderAuction <- as.data.frame(bidsDt[bidder_id == bidder, .(auction, time)])
+  plotAuctions <- ggplot(data = bidderAuction, aes(x = auction, y = log(time), colour = auction)) + geom_point() 
   
+  return(plotAuctions)
+}
+
+#Humans
+humanPlots <- lapply(randomHumans, plotAuctions, bidsDt = bids)
+multiplot(humanPlots[[1]], humanPlots[[2]], humanPlots[[3]], humanPlots[[4]], humanPlots[[5]], humanPlots[[6]], cols = 2)
+
+#Robots
+robotPlots <- lapply(randomRobots, plotAuctions, bidsDt = bids)
+multiplot(robotPlots[[1]], robotPlots[[2]], robotPlots[[3]], robotPlots[[4]], robotPlots[[5]], robotPlots[[6]], cols = 2)
+
+#EDA #3 Simultaneous bids time frame search--------------------------
+#long search, it takes approx 2h run only for EDA)
+searchRanges <- c(10, 100, 1000, 10000, 100000, 1000000, 10000000, 100000000)
+
+rangeCorrelations <- sapply(searchRanges, function(range2Search, trainDt, bidsDtSearch){
+  
+  simultaneousBids <- mclapply(trainDt$bidder_id, simultaneousAuctionTimeFinder, mc.cores = numCores,
+                               bidsDt = bidsDtSearch, range = range2Search)
+  
+  simultaneousBids <- do.call(rbind, simultaneousBids)
+  
+  correlations <- cor(simultaneousBids, trainDt$outcome)
+  print(correlations)
+  print(paste0("Correlations with range ", range2Search))
+  
+  ggplotData <- as.data.frame(cbind(simultaneousBids, trainDt$outcome))
+  names(ggplotData) <- c("simultaneousBids", "simultaneousBidsNormalized", 
+                         "simultaneousBidsPerAuction", "simultaneousBidsDispersion",
+                         "simultaneousBidsMedian", "BotOrNot")
+  
+  simBidsPlot <- ggplot(data = ggplotData, aes(x = simultaneousBidsNormalized, y = BotOrNot, colour = BotOrNot)) + geom_point() 
+  simBidsNormPlot <- ggplot(data = ggplotData, aes(x = simultaneousBidsDispersion, y = BotOrNot, colour = BotOrNot)) + geom_point()  
+  simBidsMedianPlot <- ggplot(data = ggplotData, aes(x = simultaneousBidsMedian, y = BotOrNot, colour = BotOrNot)) + geom_point() 
+  simBidsDisPlot <- ggplot(data = ggplotData, aes(x = simultaneousBidsNormalized, y = simultaneousBidsDispersion, colour = BotOrNot)) + geom_point() 
+  
+  multiplot(simBidsPlot, simBidsNormPlot, simBidsMedianPlot, simBidsDisPlot, cols = 2)
+  rm(simultaneousBids)
+  
+  return(correlations)
+  
+}, trainDt = train, bidsDtSearch = bids)
+
 #Text processing / sparse matrix creation-------------
 #Use TM Package to create corpus with TfIdf
 # corpusSparse <- removeSparseTerms(weightTfIdf(DocumentTermMatrix
@@ -179,7 +258,7 @@ bestFeaturesNumeric <- colnames(numericTimeFeaturesTrain)[colnames(numericTimeFe
 #                                   sparse = 0.9995)
 #Use TM Package to create corpus with binary weighting
 corpusSparse <- removeSparseTerms(weightBin(DocumentTermMatrix
-                                              (Corpus(VectorSource(c(boilerplateTrain, boilerplateTest))))),
+                                            (Corpus(VectorSource(c(boilerplateTrain, boilerplateTest))))),
                                   sparse = 0.9995)
 #Use TM Package to create corpus with SMART weighting - b-n-cos
 # corpusSparse <- removeSparseTerms(weightSMART(DocumentTermMatrix
@@ -197,24 +276,32 @@ corpusSparse <- removeSparseTerms(weightBin(DocumentTermMatrix
 modelTerms <- corpusSparse$dimnames$Terms
 
 corpusSparse <- sparseMatrix(i=corpusSparse$i,
-                              j=corpusSparse$j,
-                              x=corpusSparse$v, dims=c(corpusSparse$nrow, corpusSparse$ncol))
+                             j=corpusSparse$j,
+                             x=corpusSparse$v, dims=c(corpusSparse$nrow, corpusSparse$ncol))
 
 inherits(corpusSparse,"sparseMatrix")
 
 #Split train and test boilerplates
 corpusSparseTrain <- corpusSparse[1:nrow(train), ]
-corpusSparseTest <- corpusSparse[(nrow(train) + 1):nrow(corpusSparse), ]
+corpusSparseTestValid <- corpusSparse[(nrow(train) + 1):nrow(corpusSparse), ]
+corpusSparseTest <- Matrix(data = 0, nrow = 4700, ncol = ncol(corpusSparseTestValid), sparse = TRUE)
+corpusSparseTest[validTestDocuments, ] <- corpusSparseTestValid
 
 #Add time numerical 
-combinedCorpusSparseTrain <- cbind(numericTimeFeaturesTrain, uniqueFeaturesTrain, corpusSparseTrain)
-combinedCorpusSparseTest <- cbind(numericTimeFeaturesTest, uniqueFeaturesTest, corpusSparseTest)
+combinedCorpusSparseTrain <- cbind(numericTimeFeaturesTrain, uniqueFeaturesTrain, 
+                                   simultaneousFeaturesTrain, corpusSparseTrain)
+combinedCorpusSparseTest <- Matrix(data = 0, nrow = 4700, 
+                                   ncol = ncol(corpusSparseTestValid) + ncol(numericTimeFeaturesTrain) + ncol(uniqueFeaturesTrain),
+                                   sparse = TRUE)
+combinedCorpusSparseTestValid <- cbind(numericTimeFeaturesTest, uniqueFeaturesTest, 
+                                       simultaneousFeaturesTrain, corpusSparseTestValid)
+combinedCorpusSparseTest[validTestDocuments, ] <- combinedCorpusSparseTestValid
 
 #Remove unnecesary data
-#rm(boilerplateTrain, boilerplateTest, corpusSparse)
-rm(numericTimeFeaturesTrain, numericTimeFeaturesTest, boilerplateTrain, boilerplateTest, corpusSparse)
+rm(numericTimeFeaturesTrain, numericTimeFeaturesTest, boilerplateTrain, boilerplateTest, corpusSparse,
+   corpusSparseTestValid, combinedCorpusSparseTestValid)
 
-#EDA #2 GLMNET alpha vs. random seed----------------------------
+#EDA #4 GLMNET alpha vs. random seed----------------------------
 randomOrderModels <- 10
 alphaValues2Test <- seq(0.4, 0.96, 0.04)
 
@@ -278,7 +365,7 @@ registerDoParallel(numCores)
 # set.seed(1001001)
 # groupsVector <- sample(c(rep(1, trainTrainLength), rep(2, trainValidationLength + idxsdiff)), 
 #                        nrow(corpusSparseTrain))
- 
+
 # #Shuffle Indices
 # set.seed(1001002)
 # dataSplits <- split(seq(1, nrow(corpusSparseTrain)), as.factor(groupsVector))
@@ -360,7 +447,7 @@ DMMatrixTest <- xgb.DMatrix(data = combinedCorpusSparseTest)
 #Cross validation
 numberOfRepeatedModels <- 5
 xgboostAUC <- sapply(seq(1, numberOfRepeatedModels), function(modelNumber, train){
-
+  
   xgboostModelCV <- xgb.cv(data = train, nrounds = 60, nfold = 5, showsd = TRUE, 
                            metrics = "auc", verbose = TRUE, 
                            "objective" = "binary:logistic", "max.depth" = 300, 
@@ -392,7 +479,7 @@ ggplot() + geom_line(data = holdoutAucScores, aes(x = iteration, y = V1), colour
   geom_line(data = holdoutAucScores, aes(x = iteration, y = V3), colour = 'magenta') +
   geom_line(data = holdoutAucScores, aes(x = iteration, y = V4), colour = 'green') +
   geom_line(data = holdoutAucScores, aes(x = iteration, y = V5), colour = 'black')
-  
+
 #Full xgboost model
 numberOfRepeatedModels <- 5
 xgboostMultiPredictions <- sapply(seq(1, numberOfRepeatedModels), function(modelNumber, iter, train, test){
