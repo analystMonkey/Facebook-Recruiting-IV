@@ -1,8 +1,9 @@
 timeNumericFeatures <- function(auctionId, bidsDt){
   
-  auctionTimes <- bidsDt[auction == auctionId, .(bid_id, time, bidder_id)]  
+  auctionTimes <- bidsDt[auction == auctionId, .(bid_id, time, bidder_id)]    
   setnames(auctionTimes, "time", "standardMadScore")
   
+  #Time Statistical Features Extraction
   logTimes <- log(auctionTimes[, standardMadScore])
   medianAuction <- median(logTimes)
   meanAuction <- mean(logTimes)
@@ -15,6 +16,7 @@ timeNumericFeatures <- function(auctionId, bidsDt){
   auctionTimes$SSRank <- round(rank(-auctionTimes$standardScore))
   auctionTimes$SMSRank <- round(rank(-auctionTimes$standardMadScore))
   
+  #Sequential Biddings Information Extraction
   if (nrow(auctionTimes) > 1){
     
     #Secuential up-bidding    
@@ -35,9 +37,10 @@ timeNumericFeatures <- function(auctionId, bidsDt){
     is.sequential <- FALSE
   }
   
+  #Append important features
   auctionTimes <- auctionTimes[, .(bid_id, standardMadScore, standardScore, SSRank, SMSRank)]
-  auctionTimes$sequential <- is.sequential
-  
+  auctionTimes$sequential <- is.sequential  
+
   return(auctionTimes)
   
 }
