@@ -1,5 +1,5 @@
 #Facebook Recruiting IV: Human or Robot?
-#Ver. 0.1.5 #Resting time learning features
+#Ver. 0.1.6 #Resting time learning features debugged
 #Libraries, directories, options and extra functions----------------------
 require("rjson")
 require("parallel")
@@ -115,15 +115,22 @@ numericTimeFeaturesTest <- mclapply(test$bidder_id, dispersionTimeFeatures, mc.c
 #Create a sparse matrix with the numeric data
 numericTimeFeaturesTrain <- Matrix(do.call(rbind, numericTimeFeaturesTrain), sparse = TRUE)
 numericTimeFeaturesTest <- Matrix(do.call(rbind, numericTimeFeaturesTest), sparse = TRUE)
-colnames(numericTimeFeaturesTrain) <- c("minimumMad", "minimumSd", "minimumRank", "minimumMadRank",
-                                        "maximumMad", "maximumSd", "maximumRank", "maximumMadRank",
-                                        "medianMad", "medianSd", "medianRank", "medianMadRank",
-                                        "medianAverageDeviationTimeMad", "medianAverageDeviationTimeSd", "madRank", "madMadRank")
-colnames(numericTimeFeaturesTest) <- c("minimumMad", "minimumSd", "minimumRank", "minimumMadRank",
-                                       "maximumMad", "maximumSd", "maximumRank", "maximumMadRank",
-                                       "medianMad", "medianSd", "medianRank", "medianMadRank",
-                                       "medianAverageDeviationTimeMad", "medianAverageDeviationTimeSd", "madRank", "madMadRank")
-
+numericFeaturesNames <- c("minimumMad", "minimumSd", "minimumRank", "minimumMadRank",
+                          "maximumMad", "maximumSd", "maximumRank", "maximumMadRank",
+                          "medianMad", "medianSd", "medianRank", "medianMadRank",
+                          "medianAverageDeviationTimeMad", "medianAverageDeviationTimeSd", 
+                          "madRank", "madMadRank", "minRest", "maxRest", "medianRest", "madRest", 
+                          "quantileRest5", "quantileRest10", "quantileRest15", "quantileRest85", 
+                          "quantileRest90", "quantileRest95", "minFinal", "maxFinal", "medianFinal", 
+                          "madFinal", "quantileFinal5", "quantileFinal10", "quantileFinal15", 
+                          "quantileFinal85", "quantileFinal90", "quantileFinal95", 
+                          "interceptData", "slopeData", "devianceData", "quantResidualsData1",
+                          "quantResidualsData20", "quantResidualsData50", "quantResidualsData80", 
+                          "quantResidualsData99", "interceptDataFinal", "slopeDataFinal", 
+                          "devianceDataFinal", "quantResidualsDataFinal1",  "quantResidualsDataFinal20",
+                          "quantResidualsDataFinal50",  "quantResidualsDataFinal80",  "quantResidualsDataFinal99")
+colnames(numericTimeFeaturesTrain) <- numericFeaturesNames
+colnames(numericTimeFeaturesTest) <- numericFeaturesNames
 inherits(numericTimeFeaturesTrain,"sparseMatrix")
 inherits(numericTimeFeaturesTest,"sparseMatrix")
 
@@ -136,15 +143,13 @@ uniqueFeaturesTest <- mclapply(test$bidder_id, featureLengths, mc.cores = numCor
 #Create a sparse matrix with the numeric data
 uniqueFeaturesTrain <- Matrix(do.call(rbind, uniqueFeaturesTrain), sparse = TRUE)
 uniqueFeaturesTest <- Matrix(do.call(rbind, uniqueFeaturesTest), sparse = TRUE)
-colnames(uniqueFeaturesTrain) <- c("auction", "device", "country", "ip", "url", 
-                                   "medianBidsPerAuction", "maxBidsPerAuction", "minBidsPerAuction", "madBidsPerAuction",
-                                   "medianBidsPerAuctionNoSeq", "maxBidsPerAuctionNoSeq", "minBidsPerAuctionNoSeq", "madBidsPerAuctionNoSeq",
-                                   "sumSequentials", "sumNonSequentials")
-colnames(uniqueFeaturesTest) <- c("auction", "device", "country", "ip", "url", 
-                                  "medianBidsPerAuction", "maxBidsPerAuction", "minBidsPerAuction", "madBidsPerAuction",
-                                  "medianBidsPerAuctionNoSeq", "maxBidsPerAuctionNoSeq", "minBidsPerAuctionNoSeq", "madBidsPerAuctionNoSeq",
-                                  "sumSequentials", "sumNonSequentials")
+uniqueFeaturesNames <- c("auction", "device", "country", "ip", "url", 
+                         "medianBidsPerAuction", "maxBidsPerAuction", "minBidsPerAuction", "madBidsPerAuction",
+                         "medianBidsPerAuctionNoSeq", "maxBidsPerAuctionNoSeq", "minBidsPerAuctionNoSeq", "madBidsPerAuctionNoSeq",
+                         "sumSequentials", "sumNonSequentials")
 
+colnames(uniqueFeaturesTrain) <- uniqueFeaturesNames
+colnames(uniqueFeaturesTest) <- uniqueFeaturesNames
 inherits(uniqueFeaturesTrain,"sparseMatrix")
 inherits(uniqueFeaturesTest,"sparseMatrix")
 
@@ -157,13 +162,11 @@ simultaneousFeaturesTest <- mclapply(test$bidder_id, simultaneousAuctionTimeFind
 #Create a sparse matrix with the numeric data
 simultaneousFeaturesTrain <- Matrix(do.call(rbind, simultaneousFeaturesTrain), sparse = TRUE)
 simultaneousFeaturesTest <- Matrix(do.call(rbind, simultaneousFeaturesTest), sparse = TRUE)
-colnames(simultaneousFeaturesTrain) <- c("simultaneousBids", "simultaneousBidsNormalized", 
-                                         "simultaneousBidsPerAuction", "simultaneousBidsDispersion",
-                                         "simultaneousBidsMedian")
-colnames(simultaneousFeaturesTest) <- c("simultaneousBids", "simultaneousBidsNormalized", 
-                                        "simultaneousBidsPerAuction", "simultaneousBidsDispersion",
-                                        "simultaneousBidsMedian")
-
+simultaneousFeaturesNames <- c("simultaneousBids", "simultaneousBidsNormalized", 
+                               "simultaneousBidsPerAuction", "simultaneousBidsDispersion",
+                               "simultaneousBidsMedian")
+colnames(simultaneousFeaturesTrain) <- simultaneousFeaturesNames
+colnames(simultaneousFeaturesTest) <- simultaneousFeaturesNames
 inherits(simultaneousFeaturesTrain,"sparseMatrix")
 inherits(simultaneousFeaturesTest,"sparseMatrix")
 
@@ -183,7 +186,7 @@ rm(bids)
 numericData <- as.matrix(scale(cbind(uniqueFeaturesTrain, numericTimeFeaturesTrain, simultaneousFeaturesTrain)))
 
 linearBestModels <- regsubsets(x = numericData, y = as.factor(train$outcome), 
-                               method = "forward", nvmax = 30)
+                               method = "exhaustive", nvmax = 30, really.big = TRUE)
 
 #Plot the best number of predictors
 bestMods <- summary(linearBestModels)
@@ -525,7 +528,8 @@ aucErrorsHyperparameters <- apply(searchGrid, 1, function(parameterList){
     auc <- max(as.numeric(holdoutAucScores$test.auc.mean))
     bestIter <- which.max(as.numeric(holdoutAucScores$test.auc.mean))
     
-    print(paste0("model number ", modelNumber, " has an AUC of: ", auc))
+    print(paste0("model number ", modelNumber, " has an AUC of: ", auc, "with SubsampleRate of : ",
+                 parameterList[1], " and ColsampleRate of: ", currentColsampleRate))
     return(c(auc, bestIter, as.numeric(holdoutAucScores$test.auc.mean)))
     
   }, train = DMMatrixTrain)
