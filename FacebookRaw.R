@@ -1,5 +1,5 @@
 #Facebook Recruiting IV: Human or Robot?
-#Ver. 0.1.6 #Resting time learning features debugged
+#Ver. 0.1.7 #Simultaneous Search Function Improved Performance and wider search
 #Libraries, directories, options and extra functions----------------------
 require("rjson")
 require("parallel")
@@ -11,6 +11,7 @@ require('doParallel')
 require("glmnet")
 require("xgboost")
 require("SparseM")
+require("prospectr")
 require("Metrics")
 require("ggplot2")
 
@@ -144,8 +145,8 @@ uniqueFeaturesTest <- mclapply(test$bidder_id, featureLengths, mc.cores = numCor
 uniqueFeaturesTrain <- Matrix(do.call(rbind, uniqueFeaturesTrain), sparse = TRUE)
 uniqueFeaturesTest <- Matrix(do.call(rbind, uniqueFeaturesTest), sparse = TRUE)
 uniqueFeaturesNames <- c("auction", "device", "country", "ip", "url", 
-                         "medianBidsPerAuction", "maxBidsPerAuction", "minBidsPerAuction", "madBidsPerAuction",
-                         "medianBidsPerAuctionNoSeq", "maxBidsPerAuctionNoSeq", "minBidsPerAuctionNoSeq", "madBidsPerAuctionNoSeq",
+                         "medianBidsPerAuction", "maxBidsPerAuction", "meanBidsPerAuction", "madBidsPerAuction",
+                         "medianBidsPerAuctionNoSeq", "maxBidsPerAuctionNoSeq", "meanBidsPerAuctionNoSeq", "madBidsPerAuctionNoSeq",
                          "sumSequentials", "sumNonSequentials")
 
 colnames(uniqueFeaturesTrain) <- uniqueFeaturesNames
@@ -309,23 +310,26 @@ multiplot(robotRestPlots[[1]], robotRestPlots[[2]], robotRestPlots[[3]],
 #                                               (Corpus(VectorSource(c(boilerplateTrain, boilerplateTest)))), spec = "npc"),
 #                                   sparse = 0.99975)
 #Use TM Package to create corpus with binary weighting
-corpusSparse <- removeSparseTerms(weightBin(DocumentTermMatrix
-                                            (Corpus(VectorSource(c(boilerplateTrain, boilerplateTest))))),
-                                  sparse = 0.99975)
+# corpusSparse <- removeSparseTerms(weightBin(DocumentTermMatrix
+#                                             (Corpus(VectorSource(c(boilerplateTrain, boilerplateTest))))),
+#                                   sparse = 0.99975)
 #Use TM Package to create corpus with SMART weighting - b-n-cos
 # corpusSparse <- removeSparseTerms(weightSMART(DocumentTermMatrix
 #                                               (Corpus(VectorSource(c(boilerplateTrain, boilerplateTest)))), spec = "bnc"),
 #                                   sparse = 0.99975)
 #Use TM Package to create corpus with SMART weighting - b-idf-n
-# corpusSparse <- removeSparseTerms(weightSMART(DocumentTermMatrix
-#                                               (Corpus(VectorSource(c(boilerplateTrain, boilerplateTest)))), spec = "btn"),
-#                                   sparse = 0.99975)
+corpusSparse <- removeSparseTerms(weightSMART(DocumentTermMatrix
+                                              (Corpus(VectorSource(c(boilerplateTrain, boilerplateTest)))), spec = "btn"),
+                                  sparse = 0.99975)
 #Use TM Package to create corpus with SMART weighting - b-idf-cos
 # corpusSparse <- removeSparseTerms(weightSMART(DocumentTermMatrix
 #                                               (Corpus(VectorSource(c(boilerplateTrain, boilerplateTest)))), spec = "btn"),
 #                                   sparse = 0.99975)
 
-modelTerms <- corpusSparse$dimnames$Terms
+corpusTerms <- corpusSparse$dimnames$Terms
+engineeredFeaturesNames <- c(colnames(numericTimeFeaturesTrain), 
+                             colnames(uniqueFeaturesTrain), 
+                             colnames(simultaneousFeaturesTrain))
 
 corpusSparse <- sparseMatrix(i = corpusSparse$i,
                              j = corpusSparse$j,
@@ -507,14 +511,14 @@ aucErrorsHyperparameters <- apply(searchGrid, 1, function(parameterList){
   currentSubsampleRate <- parameterList[[1]]
   currentColsampleRate <- parameterList[[2]]
   
-  numberOfRepeatedModels <- 10
+  numberOfRepeatedModels <- 5
   
   #Do a repeated CV and store its AUC
   parameterListAUC <- sapply(seq(1, numberOfRepeatedModels), function(modelNumber, train){
     
-    xgboostModelCV <- xgb.cv(data = train, nrounds = 60, nfold = 5, showsd = TRUE, 
+    xgboostModelCV <- xgb.cv(data = train, nrounds = 70, nfold = 5, showsd = TRUE, 
                              metrics = "auc", verbose = TRUE, 
-                             "objective" = "binary:logistic", "max.depth" = 300, 
+                             "objective" = "binary:logistic", "max.depth" = 50, 
                              "nthread" = numCores, "set.seed" = modelNumber, 
                              "subsample" = currentSubsampleRate, "colsample_bytree" = currentColsampleRate)
     
@@ -523,14 +527,18 @@ aucErrorsHyperparameters <- apply(searchGrid, 1, function(parameterList){
     holdoutAucScores$test.auc.mean <- as.numeric(holdoutAucScores$test.auc.mean)
     holdoutAucScores$iteration <- seq(1, nrow(holdoutAucScores))
     print(ggplot(data = holdoutAucScores, aes(x = iteration, y = test.auc.mean)) + geom_line())
+    #Save Plot
+    dev.print(file = file.path(EDAPlotsLoc , paste0("SubsampleRate", currentSubsampleRate, 
+                                                    "ColsampleRate", currentColsampleRate, modelNumber)),
+              device = png, width = 1200)
     
     #Save AUC and the location of the best iteration
-    auc <- max(as.numeric(holdoutAucScores$test.auc.mean))
-    bestIter <- which.max(as.numeric(holdoutAucScores$test.auc.mean))
+    auc <- max(movav(holdoutAucScores$test.auc.mean, w = 5))
+    bestIter <- which.max(movav(holdoutAucScores$test.auc.mean, w = 5)) + 2
     
-    print(paste0("model number ", modelNumber, " has an AUC of: ", auc, "with SubsampleRate of : ",
-                 parameterList[1], " and ColsampleRate of: ", currentColsampleRate))
-    return(c(auc, bestIter, as.numeric(holdoutAucScores$test.auc.mean)))
+    print(paste0("model number ", modelNumber, " has an AUC of: ", auc, " with SubsampleRate of : ",
+                 currentSubsampleRate, " and ColsampleRate of: ", currentColsampleRate))
+    return(c(auc, bestIter))
     
   }, train = DMMatrixTrain)
   
@@ -545,9 +553,9 @@ DMMatrixTest <- xgb.DMatrix(data = combinedCorpusSparseTest)
 numberOfRepeatedModels <- 10
 xgboostAUC <- sapply(seq(1, numberOfRepeatedModels), function(modelNumber, train){
   
-  xgboostModelCV <- xgb.cv(data = train, nrounds = 60, nfold = 5, showsd = TRUE, 
+  xgboostModelCV <- xgb.cv(data = train, nrounds = 70, nfold = 5, showsd = TRUE, 
                            metrics = "auc", verbose = TRUE, 
-                           "objective" = "binary:logistic", "max.depth" = 300, 
+                           "objective" = "binary:logistic", "max.depth" = 50, 
                            "nthread" = numCores, "set.seed" = modelNumber)
   
   #Plot the progress of the model
@@ -557,8 +565,8 @@ xgboostAUC <- sapply(seq(1, numberOfRepeatedModels), function(modelNumber, train
   print(ggplot(data = holdoutAucScores, aes(x = iteration, y = test.auc.mean)) + geom_line())
   
   #Save AUC and the location of the best iteration
-  auc <- max(as.numeric(holdoutAucScores$test.auc.mean))
-  bestIter <- which.max(as.numeric(holdoutAucScores$test.auc.mean))
+  auc <- max(movav(holdoutAucScores$test.auc.mean, w = 5))
+  bestIter <- which.max(movav(holdoutAucScores$test.auc.mean, w = 5)) + 2
   
   print(paste0("model number ", modelNumber, " has an AUC of: ", auc))
   return(c(auc, bestIter, as.numeric(holdoutAucScores$test.auc.mean)))
@@ -577,23 +585,26 @@ ggplot() + geom_line(data = holdoutAucScores, aes(x = iteration, y = V1), colour
   geom_line(data = holdoutAucScores, aes(x = iteration, y = V4), colour = 'green') +
   geom_line(data = holdoutAucScores, aes(x = iteration, y = V5), colour = 'black')
 
+#Save Plot
+dev.print(file = file.path(EDAPlotsLoc , "Repeated10FoldCVPerformance"),
+          device = png, width = 1200)
+
 #Full xgboost model
 numberOfRepeatedModels <- 5
 xgboostMultiPredictions <- sapply(seq(1, numberOfRepeatedModels), function(modelNumber, iter, train, test){
   
   xgboostModel <- xgboost(data = train, nrounds = iter + 10,
                           showsd = TRUE, metrics = "auc", verbose = TRUE, 
-                          "objective" = "binary:logistic", "max.depth" = 300, "nthread" = numCores,
+                          "objective" = "binary:logistic", "max.depth" = 50, "nthread" = numCores,
                           "set.seed" = modelNumber)
   
   model <- xgb.dump(xgboostModel, with.stats = T)
-  model[1:10]
   
   #Plot feature importance  
   # Compute feature importance matrix
-  #importance_matrix <- xgb.importance(modelTerms, model = xgboostModel)  
+  importanceMatrix <- xgb.importance(c(engineeredFeaturesNames, corpusTerms), model = xgboostModel)  
   #Importance graph
-  #xgb.plot.importance(importance_matrix[1:10,])
+  print(xgb.plot.importance(importanceMatrix[1:50,]))
   
   #Predict
   xgboostPrediction <- predict(xgboostModel, test)
@@ -604,6 +615,23 @@ xgboostMultiPredictions <- sapply(seq(1, numberOfRepeatedModels), function(model
 }, iter = bestIteration, train = DMMatrixTrain, test = DMMatrixTest)
 
 xgboostPrediction <- apply(xgboostMultiPredictions, 1, mean)
+
+#Full Model with slow learning (eta = 0.001)
+xgboostModelSlow <- xgboost(data = DMMatrixTrain, nrounds = 1000,
+                            showsd = TRUE, metrics = "auc", verbose = TRUE, "eta" = 0.01,
+                            "objective" = "binary:logistic", "max.depth" = 50, "nthread" = numCores,
+                            "set.seed" = 10001001)
+
+model <- xgb.dump(xgboostModelSlow, with.stats = T)
+
+#Plot feature importance  
+# Compute feature importance matrix
+importanceMatrix <- xgb.importance(c(engineeredFeaturesNames, corpusTerms), model = xgboostModelSlow)  
+#Importance graph
+print(xgb.plot.importance(importanceMatrix[1:50,]))
+
+#Predict
+xgboostPredictionSlow <- predict(xgboostModelSlow, DMMatrixTest)
 
 #Make a submission file------------------
 #Read the sample file
@@ -620,8 +648,15 @@ system('zip GLMNETElasticNetBagOWordsTfIdfXIV.zip GLMNETElasticNetBagOWordsTfIdf
 sampleSubmissionFile$prediction <- xgboostPrediction
 
 #Write File
-write.csv(sampleSubmissionFile, file = "xgboostTfIdfIV.csv", row.names = FALSE)
-system('zip xgboostTfIdfIV.zip xgboostTfIdfIV.csv')
+write.csv(sampleSubmissionFile, file = "xgboostBinV.csv", row.names = FALSE)
+system('zip xgboostBinV.zip xgboostBinV.csv')
+
+#xgboost Slow
+sampleSubmissionFile$prediction <- xgboostPredictionSlow
+
+#Write File
+write.csv(sampleSubmissionFile, file = "xgboostSlowBinV.csv", row.names = FALSE)
+system('zip xgboostSlowBinV.zip xgboostSlowBinV.csv')
 
 #Combined submission
 sampleSubmissionFile$prediction <- apply(cbind(apply(predictionsGLMNET, 1, mean), xgboostPrediction), 1, mean)
