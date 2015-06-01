@@ -1,46 +1,73 @@
 simultaneousAuctionTimeFinder <- function(bidderIds, bidsDt, range){
   
-  bidderAuction <- bidsDt[bidder_id == bidderIds, .(auction, time)]
-  
-#   #Round times inside a range
-#   bidderAuction$time <- as.integer64(substr(as.character(bidderAuction$time), 1, 16 - range))
-#   timesTable <- table(bidderAuction$time)
-#   uniqueSimultaneousTime <- bidderAuction$time[timesTable > 1]
-#   
-#   #Define a simultaneous event search
-#   simultaneousChecker <- function(uniqueTime, Variable2Check){    
-#     simultaneousEvent <- bidderAuction[bidderAuction$time == uniqueTime, Variable2Check, with = FALSE]
-#     return(length(simultaneousEvent) - 1)    
-#   }
-#   
-#   #Simultaneous Auctions
-#   if (sum(table(bidderAuction$time) > 1) == 0){    
-#     simultaneousAuctions <- 0    
-#   }else{
-#     simultaneousAuctionsVector <- sapply(uniqueSimultaneousTime, simultaneousChecker, Variable2Check = "auction")    
-#     simultaneousAuctions <- sum(simultaneousAuctionsVector)
-#   }  
+  bidderInfoDt <- bidsDt[bidder_id == bidderIds, .(auction, device, country, time)]
+  bidderInfoDt$time <- as.integer64(substr(as.character(bidderInfoDt$time), 1, 16 - range))
   
   #Simultaneous Auctions counter
-  roundedAuctionTimes <- lapply(unique(bidderAuction$auction), function(auctionId, auctionBidderDt){
+  roundedAuctionTimes <- lapply(unique(bidderInfoDt$auction), function(auctionId, BidderDt){
     
-    auctionBidderDt <- bidderAuction[auction == auctionId, .(auction, time)]
+    auctionDt <- BidderDt[auction == auctionId, .(auction, time)]
     #Remove consecutive bids with same time, keep only one
-    uniqueTimesInAuction <- unique(auctionBidderDt$time)
-    #Reduce to values within a certain range 
-    uniqueTimesInAuction <- round(uniqueTimesInAuction / range)
+    uniqueTimesInAuction <- unique(auctionDt$time)
+
     return(uniqueTimesInAuction)
     
-  }, auctionBidderDt = bidderAuction)
+  }, BidderDt = bidderInfoDt)
   
-  auctionsTimesVector <- do.call(c, roundedAuctionTimes)
+  auctionsTimesVector <- as.character(do.call(c, roundedAuctionTimes))
   simultaneousTable <- table(auctionsTimesVector)
   simultaneousBids <- sum(simultaneousTable - 1)
   simultaneousBidsNormalized <- simultaneousBids / length(auctionsTimesVector)
-  simultaneousBidsPerAuction <- simultaneousBids / length(unique(bidderAuction$auction))  
+  simultaneousBidsPerAuction <- simultaneousBids / length(unique(bidderInfoDt$auction))  
   simultaneousBidsDispersion <- mad(simultaneousTable)
-  simultaneousBidsMedian <- median(simultaneousTable - 1)  
+  simultaneousBidsMedian <- median(simultaneousTable - 1) 
   
-  return(c(simultaneousBids, simultaneousBidsNormalized, 
-           simultaneousBidsPerAuction, simultaneousBidsDispersion, simultaneousBidsMedian))
+  simAuctions <- c(simultaneousBids, simultaneousBidsNormalized, simultaneousBidsPerAuction,
+                   simultaneousBidsDispersion, simultaneousBidsMedian)
+  
+  #Simultaneous Devices counter
+  roundedDevicesTimes <- lapply(unique(bidderInfoDt$device), function(deviceId, BidderDt){
+    
+    auctionDt <- BidderDt[device == deviceId, .(device, time)]
+    #Remove consecutive bids with same time, keep only one
+    uniqueTimesInDevices <- unique(auctionDt$time)
+    
+    return(uniqueTimesInDevices)
+    
+  }, BidderDt = bidderInfoDt)
+  
+  devicesTimesVector <- as.character(do.call(c, roundedDevicesTimes))
+  simultaneousTableDevices <- table(devicesTimesVector)
+  simultaneousDevices <- sum(simultaneousTableDevices - 1)
+  simultaneousDevicesNormalized <- simultaneousDevices / length(devicesTimesVector)
+  simultaneousDevicesPerAuction <- simultaneousDevices / length(unique(bidderInfoDt$device))  
+  simultaneousDevicesDispersion <- mad(simultaneousTableDevices)
+  simultaneousDevicesMedian <- median(simultaneousTableDevices - 1) 
+  
+  simDevices <- c(simultaneousDevices, simultaneousDevicesNormalized, simultaneousDevicesPerAuction,
+                  simultaneousDevicesDispersion, simultaneousDevicesMedian)
+  
+  #Simultaneous Countries counter
+  roundedCountriesTimes <- lapply(unique(bidderInfoDt$country), function(countryId, BidderDt){
+    
+    auctionDt <- BidderDt[country == countryId, .(country, time)]
+    #Remove consecutive bids with same time, keep only one
+    uniqueTimesInCountries <- unique(auctionDt$time)
+    
+    return(uniqueTimesInCountries)
+    
+  }, BidderDt = bidderInfoDt)
+  
+  countriesTimesVector <- as.character(do.call(c, roundedCountriesTimes))
+  simultaneousTableCountries <- table(countriesTimesVector)
+  simultaneousCountries <- sum(simultaneousTableCountries - 1)
+  simultaneousCountriesNormalized <- simultaneousCountries / length(simultaneousTableCountries)
+  simultaneousCountriesPerAuction <- simultaneousCountries / length(unique(bidderInfoDt$country))  
+  simultaneousCountriesDispersion <- mad(simultaneousTableCountries)
+  simultaneousCountriesMedian <- median(simultaneousTableCountries - 1) 
+  
+  simCountries <- c(simultaneousCountries, simultaneousCountriesNormalized, simultaneousCountriesPerAuction,
+                    simultaneousCountriesDispersion, simultaneousCountriesMedian)
+  
+  return(c(simAuctions, simDevices, simCountries))
 }

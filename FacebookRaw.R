@@ -1,5 +1,5 @@
 #Facebook Recruiting IV: Human or Robot?
-#Ver. 0.1.7 #Simultaneous Search Function Improved Performance and wider search
+#Ver. 0.1.8 #various improvements + generic xgboost train function included
 #Libraries, directories, options and extra functions----------------------
 require("rjson")
 require("parallel")
@@ -51,6 +51,9 @@ bids <- fread(file.path(dataDirectory, directories$bids), verbose = TRUE)
 
 #Remove training data that cannot be found in the bids data table
 train <- train[train$bidder_id %in% bids$bidder_id]
+#Shuffle Training Dataset
+train <- train[sample(1:nrow(train), nrow(train))]
+#Remove testing data that cannot be found in the bids data table
 validTestDocuments <- which(test$bidder_id %in% bids$bidder_id)
 test <- test[test$bidder_id %in% bids$bidder_id]
 
@@ -156,16 +159,20 @@ inherits(uniqueFeaturesTest,"sparseMatrix")
 
 #Extract simultaneous bids data
 simultaneousFeaturesTrain <- mclapply(train$bidder_id, simultaneousAuctionTimeFinder, mc.cores = numCores,
-                                      bidsDt = bids, range = 10000)
+                                      bidsDt = bids, range = 11)
 simultaneousFeaturesTest <- mclapply(test$bidder_id, simultaneousAuctionTimeFinder, mc.cores = numCores,
-                                     bidsDt = bids, range = 10000)
+                                     bidsDt = bids, range = 11)
 
 #Create a sparse matrix with the numeric data
 simultaneousFeaturesTrain <- Matrix(do.call(rbind, simultaneousFeaturesTrain), sparse = TRUE)
 simultaneousFeaturesTest <- Matrix(do.call(rbind, simultaneousFeaturesTest), sparse = TRUE)
 simultaneousFeaturesNames <- c("simultaneousBids", "simultaneousBidsNormalized", 
                                "simultaneousBidsPerAuction", "simultaneousBidsDispersion",
-                               "simultaneousBidsMedian")
+                               "simultaneousBidsMedian", "simultaneousDevices", "simultaneousDevicesNormalized", 
+                               "simultaneousDevicesPerAuction", "simultaneousDevicesDispersion", 
+                               "simultaneousDevicesMedian", "simultaneousCountries", "simultaneousCountriesNormalized",
+                               "simultaneousCountriesPerAuction", "simultaneousCountriesDispersion", 
+                               "simultaneousCountriesMedian")
 colnames(simultaneousFeaturesTrain) <- simultaneousFeaturesNames
 colnames(simultaneousFeaturesTest) <- simultaneousFeaturesNames
 inherits(simultaneousFeaturesTrain,"sparseMatrix")
@@ -187,7 +194,7 @@ rm(bids)
 numericData <- as.matrix(scale(cbind(uniqueFeaturesTrain, numericTimeFeaturesTrain, simultaneousFeaturesTrain)))
 
 linearBestModels <- regsubsets(x = numericData, y = as.factor(train$outcome), 
-                               method = "exhaustive", nvmax = 30, really.big = TRUE)
+                               method = "forward", nvmax = 50)
 
 #Plot the best number of predictors
 bestMods <- summary(linearBestModels)
@@ -228,7 +235,14 @@ multiplot(robotPlots[[1]], robotPlots[[2]], robotPlots[[3]], robotPlots[[4]], ro
 
 #EDA #3 Simultaneous bids time frame search--------------------------
 #long search, it takes approx 2h run only for EDA)
-searchRanges <- c(10, 1000, 100000, 10000000)
+searchRanges <- c(1, 3, 5, 9, 10, 11, 12, 13)
+variablesNames <- c("simultaneousBids", "simultaneousBidsNormalized", 
+                    "simultaneousBidsPerAuction", "simultaneousBidsDispersion",
+                    "simultaneousBidsMedian", "simultaneousDevices", "simultaneousDevicesNormalized", 
+                    "simultaneousDevicesPerAuction", "simultaneousDevicesDispersion", 
+                    "simultaneousDevicesMedian", "simultaneousCountries", "simultaneousCountriesNormalized",
+                    "simultaneousCountriesPerAuction", "simultaneousCountriesDispersion", 
+                    "simultaneousCountriesMedian", "BotOrNot")
 
 rangeCorrelations <- sapply(searchRanges, function(range2Search, trainDt, bidsDtSearch){
   
@@ -242,21 +256,30 @@ rangeCorrelations <- sapply(searchRanges, function(range2Search, trainDt, bidsDt
   print(paste0("Correlations with range ", range2Search))
   
   ggplotData <- as.data.frame(cbind(simultaneousBids, trainDt$outcome))
-  names(ggplotData) <- c("simultaneousBids", "simultaneousBidsNormalized", 
-                         "simultaneousBidsPerAuction", "simultaneousBidsDispersion",
-                         "simultaneousBidsMedian", "BotOrNot")
+  names(ggplotData) <- variablesNames
   
-  simBidsPlot <- ggplot(data = ggplotData, aes(x = simultaneousBidsNormalized, y = BotOrNot, colour = BotOrNot)) + geom_point() 
-  simBidsNormPlot <- ggplot(data = ggplotData, aes(x = simultaneousBidsDispersion, y = BotOrNot, colour = BotOrNot)) + geom_point()  
-  simBidsMedianPlot <- ggplot(data = ggplotData, aes(x = simultaneousBidsMedian, y = BotOrNot, colour = BotOrNot)) + geom_point() 
-  simBidsDisPlot <- ggplot(data = ggplotData, aes(x = simultaneousBidsNormalized, y = simultaneousBidsDispersion, colour = BotOrNot)) + geom_point() 
+  simBidsNorm <- ggplot(data = ggplotData, aes(x = simultaneousBidsNormalized, y = BotOrNot, colour = BotOrNot)) + geom_point() 
+  simDeviceNorm <- ggplot(data = ggplotData, aes(x = simultaneousDevicesNormalized, y = BotOrNot, colour = BotOrNot)) + geom_point()  
+  simCountriesNorm <- ggplot(data = ggplotData, aes(x = simultaneousCountriesNormalized, y = BotOrNot, colour = BotOrNot)) + geom_point() 
   
-  multiplot(simBidsPlot, simBidsNormPlot, simBidsMedianPlot, simBidsDisPlot, cols = 2)
-  rm(simultaneousBids)
+  print(multiplot(simBidsNorm, simDeviceNorm, simCountriesNorm, cols = 2))
+  rm(simultaneousBids, simBidsNorm, simDeviceNorm, simCountriesNor, ggplotData)
   
-  return(correlations)
+  return(c(range2Search, correlations))
   
 }, trainDt = train, bidsDtSearch = bids)
+
+#Plot correlation values
+ggplotData <- as.data.frame(rangeCorrelations[2:nrow(rangeCorrelations), ])
+ggplotData$variables <- variablesNames[-length(variablesNames)]
+names(ggplotData) <- c(paste0("range", as.character(rangeCorrelations[1, ])), "variables")
+ggplot() + geom_line(data = ggplotData, aes(x = variables, y = range3, group = 1, color = "Range3")) + 
+  geom_line(data = ggplotData, aes(x = variables, y = range5, group = 1, color = "Range5")) + 
+  geom_line(data = ggplotData, aes(x = variables, y = range9, group = 1, color = "Range9")) + 
+  geom_line(data = ggplotData, aes(x = variables, y = range10, group = 1, color = "Range10")) + 
+  geom_line(data = ggplotData, aes(x = variables, y = range11, group = 1, color = "Range11")) + 
+  geom_line(data = ggplotData, aes(x = variables, y = range12, group = 1, color = "Range12")) + 
+  geom_line(data = ggplotData, aes(x = variables, y = range13, group = 1, color = "Range13")) 
 
 #EDA #4 Resting time learning robots vs. humans--------------------------
 set.seed(1000007)
@@ -300,31 +323,31 @@ multiplot(robotRestPlots[[1]], robotRestPlots[[2]], robotRestPlots[[3]],
 #Use TM Package to create corpus with TfIdf
 # corpusSparse <- removeSparseTerms(weightTfIdf(DocumentTermMatrix
 #                                               (Corpus(VectorSource(c(boilerplateTrain, boilerplateTest)))), normalize = TRUE),
-#                                   sparse = 0.99975)
+#                                   sparse = 0.9999)
 #Use TM Package to create corpus with SMART weighting - tf-prob(idf)-n
 # corpusSparse <- removeSparseTerms(weightSMART(DocumentTermMatrix
 #                                               (Corpus(VectorSource(c(boilerplateTrain, boilerplateTest)))), spec = "npn"),
-#                                   sparse = 0.99975)
+#                                   sparse = 0.9999)
 #Use TM Package to create corpus with SMART weighting - tf-prob(idf)-c
 # corpusSparse <- removeSparseTerms(weightSMART(DocumentTermMatrix
 #                                               (Corpus(VectorSource(c(boilerplateTrain, boilerplateTest)))), spec = "npc"),
-#                                   sparse = 0.99975)
+#                                   sparse = 0.9999)
 #Use TM Package to create corpus with binary weighting
-# corpusSparse <- removeSparseTerms(weightBin(DocumentTermMatrix
-#                                             (Corpus(VectorSource(c(boilerplateTrain, boilerplateTest))))),
-#                                   sparse = 0.99975)
+corpusSparse <- removeSparseTerms(weightBin(DocumentTermMatrix
+                                            (Corpus(VectorSource(c(boilerplateTrain, boilerplateTest))))),
+                                  sparse = 0.9999)
 #Use TM Package to create corpus with SMART weighting - b-n-cos
 # corpusSparse <- removeSparseTerms(weightSMART(DocumentTermMatrix
 #                                               (Corpus(VectorSource(c(boilerplateTrain, boilerplateTest)))), spec = "bnc"),
-#                                   sparse = 0.99975)
+#                                   sparse = 0.9999)
 #Use TM Package to create corpus with SMART weighting - b-idf-n
-corpusSparse <- removeSparseTerms(weightSMART(DocumentTermMatrix
-                                              (Corpus(VectorSource(c(boilerplateTrain, boilerplateTest)))), spec = "btn"),
-                                  sparse = 0.99975)
+# corpusSparse <- removeSparseTerms(weightSMART(DocumentTermMatrix
+#                                               (Corpus(VectorSource(c(boilerplateTrain, boilerplateTest)))), spec = "btn"),
+#                                   sparse = 0.9999)
 #Use TM Package to create corpus with SMART weighting - b-idf-cos
 # corpusSparse <- removeSparseTerms(weightSMART(DocumentTermMatrix
 #                                               (Corpus(VectorSource(c(boilerplateTrain, boilerplateTest)))), spec = "btn"),
-#                                   sparse = 0.99975)
+#                                   sparse = 0.9999)
 
 corpusTerms <- corpusSparse$dimnames$Terms
 engineeredFeaturesNames <- c(colnames(numericTimeFeaturesTrain), 
@@ -344,21 +367,35 @@ corpusSparseTest <- Matrix(data = 0, nrow = 4700, ncol = ncol(corpusSparseTestVa
 corpusSparseTest[validTestDocuments, ] <- corpusSparseTestValid
 
 #Add time numerical 
-combinedCorpusSparseTrain <- cbind(numericTimeFeaturesTrain, uniqueFeaturesTrain, 
-                                   simultaneousFeaturesTrain, corpusSparseTrain)
+numFeaturesTrain <- cbind(numericTimeFeaturesTrain, uniqueFeaturesTrain, simultaneousFeaturesTrain)
+numFeaturesTest <- cbind(numericTimeFeaturesTest, uniqueFeaturesTest, simultaneousFeaturesTest)
+
+combinedCorpusSparseTrain <- cbind(numFeaturesTrain, corpusSparseTrain)
 combinedCorpusSparseTest <- Matrix(data = 0, nrow = 4700, 
-                                   ncol = ncol(numericTimeFeaturesTrain) + ncol(uniqueFeaturesTrain) + 
-                                     ncol(simultaneousFeaturesTrain) + ncol(corpusSparseTrain),
+                                   ncol = ncol(numFeaturesTrain) + ncol(corpusSparseTrain),
                                    sparse = TRUE)
-combinedCorpusSparseTestValid <- cbind(numericTimeFeaturesTest, uniqueFeaturesTest, 
-                                       simultaneousFeaturesTest, corpusSparseTestValid)
+combinedCorpusSparseTestValid <- cbind(numFeaturesTest, corpusSparseTestValid)
 combinedCorpusSparseTest[validTestDocuments, ] <- combinedCorpusSparseTestValid
+
+#Normalized Numeric Features for linear classification
+scaledNumericFull <- scale(cbind(rbind(numericTimeFeaturesTrain, numericTimeFeaturesTest),
+                                 rbind(uniqueFeaturesTrain, uniqueFeaturesTest),
+                                 rbind(simultaneousFeaturesTrain, simultaneousFeaturesTest)))
+
+combinedCorpusSparseTrainNorm <- cbind(scaledNumericFull[1:nrow(corpusSparseTrain), ], corpusSparseTrain)
+combinedCorpusSparseTestNorm <- Matrix(data = 0, nrow = 4700, 
+                                       ncol = ncol(numericTimeFeaturesTrain) + ncol(uniqueFeaturesTrain) + 
+                                         ncol(simultaneousFeaturesTrain) + ncol(corpusSparseTrain),
+                                       sparse = TRUE)
+combinedCorpusSparseTestValidNorm <- cbind(scaledNumericFull[(nrow(corpusSparseTrain) + 1):nrow(scaledNumericFull), ],
+                                           corpusSparseTestValid)
+combinedCorpusSparseTestNorm[validTestDocuments, ] <- combinedCorpusSparseTestValidNorm
 
 #Remove unnecesary data
 rm(numericTimeFeaturesTrain, numericTimeFeaturesTest, boilerplateTrain, boilerplateTest, corpusSparse,
    corpusSparseTestValid, combinedCorpusSparseTestValid)
 
-#EDA #4 GLMNET alpha vs. random seed----------------------------
+#EDA #5 GLMNET alpha vs. random seed----------------------------
 randomOrderModels <- 10
 alphaValues2Test <- seq(0.4, 0.96, 0.04)
 
@@ -368,10 +405,10 @@ alphaVsAucPlots <- lapply(seq(1, randomOrderModels), function(modelNumber){
     #Set seed for sampling
     set.seed(1001000 + modelNumber)
     #Shuffle indexes  
-    randomIndexOrder <- sample(seq(1, nrow(corpusSparseTrain)), nrow(corpusSparseTrain))
+    randomIndexOrder <- sample(seq(1, nrow(combinedCorpusSparseTrainNorm)), nrow(combinedCorpusSparseTrainNorm))
     
     #10 fold CV with glmnet
-    GLMNETModelCV <- cv.glmnet(x = corpusSparseTrain[randomIndexOrder, ], 
+    GLMNETModelCV <- cv.glmnet(x = combinedCorpusSparseTrainNorm[randomIndexOrder, ], 
                                y = as.factor(train$outcome)[randomIndexOrder], 
                                nfolds = 5, parallel = TRUE, family = "binomial",
                                standardize = FALSE, alpha = alphaValue, type.measure = "auc")
@@ -415,17 +452,17 @@ bestAlpha2 <- mean(do.call(c, bestAlphas))
 registerDoParallel(numCores)
 
 #Do a simple data holdout of 20%
-# trainTrainLength <- floor(nrow(corpusSparseTrain) * 0.7)   #60% of training data used to train models
-# trainValidationLength <- floor(nrow(corpusSparseTrain) * 0.3)   #20% of training data to validate models
-# idxsdiff <- nrow(corpusSparseTrain) - (trainTrainLength + trainValidationLength)
+# trainTrainLength <- floor(nrow(combinedCorpusSparseTrainNorm) * 0.7)   #60% of training data used to train models
+# trainValidationLength <- floor(nrow(combinedCorpusSparseTrainNorm) * 0.3)   #20% of training data to validate models
+# idxsdiff <- nrow(combinedCorpusSparseTrainNorm) - (trainTrainLength + trainValidationLength)
 
 # set.seed(1001001)
 # groupsVector <- sample(c(rep(1, trainTrainLength), rep(2, trainValidationLength + idxsdiff)), 
-#                        nrow(corpusSparseTrain))
+#                        nrow(combinedCorpusSparseTrainNorm))
 
 # #Shuffle Indices
 # set.seed(1001002)
-# dataSplits <- split(seq(1, nrow(corpusSparseTrain)), as.factor(groupsVector))
+# dataSplits <- split(seq(1, nrow(combinedCorpusSparseTrainNorm)), as.factor(groupsVector))
 
 #Elastic Net alpha values validation
 alphaValues2Test <- seq(0.1, 0.95, 0.05)
@@ -437,10 +474,10 @@ holdoutAucScores <- sapply(alphaValues2Test, function(alphaValue){
     #Set seed for sampling
     set.seed(1001000 + modelNumber)
     #Shuffle indexes
-    randomIndexOrder <- sample(seq(1, nrow(corpusSparseTrain)), nrow(corpusSparseTrain))
+    randomIndexOrder <- sample(seq(1, nrow(combinedCorpusSparseTrainNorm)), nrow(combinedCorpusSparseTrainNorm))
     
     #10 fold CV with glmnet
-    GLMNETModelCV <- cv.glmnet(x = corpusSparseTrain[randomIndexOrder, ], 
+    GLMNETModelCV <- cv.glmnet(x = combinedCorpusSparseTrainNorm[randomIndexOrder, ], 
                                y = as.factor(train$outcome)[randomIndexOrder], 
                                nfolds = 5, parallel = TRUE, family = "binomial",
                                standardize = FALSE, alpha = alphaValue, type.measure = "auc")
@@ -474,10 +511,10 @@ predictionsGLMNET <- sapply(seq(1, numberOfRepeatedModels), function(modelNumber
   #Set seed for sampling
   set.seed(1001000 + modelNumber)
   #Shuffle indexes  
-  randomIndexOrder <- sample(seq(1, nrow(corpusSparseTrain)), nrow(corpusSparseTrain))
+  randomIndexOrder <- sample(seq(1, nrow(combinedCorpusSparseTrainNorm)), nrow(combinedCorpusSparseTrainNorm))
   
   #10 fold CV with glmnet
-  GLMNETModelCV <- cv.glmnet(x = corpusSparseTrain[randomIndexOrder, ], 
+  GLMNETModelCV <- cv.glmnet(x = combinedCorpusSparseTrainNorm[randomIndexOrder, ], 
                              y = as.factor(train$outcome)[randomIndexOrder], 
                              nfolds = 5, parallel = TRUE, family = "binomial",
                              standardize = FALSE, alpha = bestAlpha, type.measure = "auc")
@@ -485,7 +522,7 @@ predictionsGLMNET <- sapply(seq(1, numberOfRepeatedModels), function(modelNumber
   plot(GLMNETModelCV)
   cvError <- GLMNETModelCV$cvm[which(GLMNETModelCV$lambda == GLMNETModelCV$lambda.min)]  
   
-  predictedBots <- signif(predict(GLMNETModelCV, newx =  corpusSparseTest, 
+  predictedBots <- signif(predict(GLMNETModelCV, newx =  combinedCorpusSparseTestNorm, 
                                   type = "response", s = "lambda.min"), digits = 6)
   
   print(paste0("AUC score of : ", cvError, " with an alpha value of: ", bestAlpha))
@@ -499,8 +536,8 @@ predictionsGLMNET <- sapply(seq(1, numberOfRepeatedModels), function(modelNumber
 ##Xgboost
 #Hyperparameter Search
 #Create search grid
-searchGrid <- expand.grid(subsample = c(0.5, 0.66, 0.9, 1), 
-                          colsample_bytree = c(0.5, 0.66, 0.9, 1))
+searchGrid <- expand.grid(subsample = c(0.66, 0.95, 1), 
+                          colsample_bytree = c(0.66, 0.95, 1))
 
 #Contruct xgb.DMatrix object
 DMMatrixTrain <- xgb.DMatrix(data = combinedCorpusSparseTrain, label = train$outcome)
@@ -518,7 +555,7 @@ aucErrorsHyperparameters <- apply(searchGrid, 1, function(parameterList){
     
     xgboostModelCV <- xgb.cv(data = train, nrounds = 70, nfold = 5, showsd = TRUE, 
                              metrics = "auc", verbose = TRUE, 
-                             "objective" = "binary:logistic", "max.depth" = 50, 
+                             "objective" = "binary:logistic", "max.depth" = 80, 
                              "nthread" = numCores, "set.seed" = modelNumber, 
                              "subsample" = currentSubsampleRate, "colsample_bytree" = currentColsampleRate)
     
@@ -554,9 +591,9 @@ numberOfRepeatedModels <- 10
 xgboostAUC <- sapply(seq(1, numberOfRepeatedModels), function(modelNumber, train){
   
   xgboostModelCV <- xgb.cv(data = train, nrounds = 70, nfold = 5, showsd = TRUE, 
-                           metrics = "auc", verbose = TRUE, 
-                           "objective" = "binary:logistic", "max.depth" = 50, 
-                           "nthread" = numCores, "set.seed" = modelNumber)
+                           metrics = "auc", verbose = TRUE, "eval_metric" = "auc",
+                           "objective" = "binary:logistic", "max.depth" = 80, 
+                           "nthread" = numCores, "set.seed" = 101010 + modelNumber)
   
   #Plot the progress of the model
   holdoutAucScores <- as.data.frame(xgboostModelCV)
@@ -591,13 +628,16 @@ dev.print(file = file.path(EDAPlotsLoc , "Repeated10FoldCVPerformance"),
 
 #Full xgboost model
 numberOfRepeatedModels <- 5
-xgboostMultiPredictions <- sapply(seq(1, numberOfRepeatedModels), function(modelNumber, iter, train, test){
+customParamList <- list(eval_metric = "auc", objective = "binary:logistic", max_depth = 80)
+xgboostMultiPredictions <- sapply(seq(1, numberOfRepeatedModels), function(modelNumber, iter, train, test, paramList){
   
-  xgboostModel <- xgboost(data = train, nrounds = iter + 10,
-                          showsd = TRUE, metrics = "auc", verbose = TRUE, 
-                          "objective" = "binary:logistic", "max.depth" = 50, "nthread" = numCores,
-                          "set.seed" = modelNumber)
+  xgboostModel <- xgb.train(params = paramList, data = train, nrounds = iter + 20, verbose = 2)
   
+#   xgboostModel <- xgboost(data = train, nrounds = iter + 20,
+#                           showsd = TRUE, metrics = "auc", verbose = TRUE, 
+#                           "objective" = "binary:logistic", "max.depth" = 80, "nthread" = numCores,
+#                           "set.seed" = modelNumber)
+   
   model <- xgb.dump(xgboostModel, with.stats = T)
   
   #Plot feature importance  
@@ -605,21 +645,35 @@ xgboostMultiPredictions <- sapply(seq(1, numberOfRepeatedModels), function(model
   importanceMatrix <- xgb.importance(c(engineeredFeaturesNames, corpusTerms), model = xgboostModel)  
   #Importance graph
   print(xgb.plot.importance(importanceMatrix[1:50,]))
-  
+  #Save Plot
+  dev.print(file = file.path(EDAPlotsLoc , paste0("VariableImportance", modelNumber)),
+            device = png, width = 1200)
   #Predict
   xgboostPrediction <- predict(xgboostModel, test)
   print(paste0("model number ", modelNumber, " processed"))
   rm(xgboostModel)
   return(xgboostPrediction)
   
-}, iter = bestIteration, train = DMMatrixTrain, test = DMMatrixTest)
+}, iter = bestIteration, train = DMMatrixTrain, test = DMMatrixTest, paramList = customParamList)
 
 xgboostPrediction <- apply(xgboostMultiPredictions, 1, mean)
 
-#Full Model with slow learning (eta = 0.001)
-xgboostModelSlow <- xgboost(data = DMMatrixTrain, nrounds = 1000,
-                            showsd = TRUE, metrics = "auc", verbose = TRUE, "eta" = 0.01,
-                            "objective" = "binary:logistic", "max.depth" = 50, "nthread" = numCores,
+#Cross Validation Slow Learining
+xgboostModelCV <- xgb.cv(data = DMMatrixTrain, nrounds = 3500, nfold = 5, showsd = TRUE, 
+                         metrics = "auc", verbose = TRUE, "eta" = 0.001,
+                         "objective" = "binary:logistic", "max.depth" = 80, 
+                         "nthread" = numCores, "set.seed" = 10001000)
+
+#Plot the progress of the model
+holdoutAucScores <- as.data.frame(xgboostModelCV)
+holdoutAucScores$test.auc.mean <- as.numeric(holdoutAucScores$test.auc.mean)
+holdoutAucScores$iteration <- seq(1, nrow(holdoutAucScores))
+print(ggplot(data = holdoutAucScores, aes(x = iteration, y = test.auc.mean)) + geom_line())
+
+#Full Model with slow learning (eta = 0.003)
+xgboostModelSlow <- xgboost(data = DMMatrixTrain, nrounds = 3500,
+                            showsd = TRUE, metrics = "auc", verbose = TRUE, "eta" = 0.001,
+                            "objective" = "binary:logistic", "max.depth" = 80, "nthread" = numCores,
                             "set.seed" = 10001001)
 
 model <- xgb.dump(xgboostModelSlow, with.stats = T)
@@ -629,6 +683,9 @@ model <- xgb.dump(xgboostModelSlow, with.stats = T)
 importanceMatrix <- xgb.importance(c(engineeredFeaturesNames, corpusTerms), model = xgboostModelSlow)  
 #Importance graph
 print(xgb.plot.importance(importanceMatrix[1:50,]))
+#Save Plot
+dev.print(file = file.path(EDAPlotsLoc , "VariableImportanceSlowModel"),
+          device = png, width = 1200)
 
 #Predict
 xgboostPredictionSlow <- predict(xgboostModelSlow, DMMatrixTest)
@@ -648,15 +705,15 @@ system('zip GLMNETElasticNetBagOWordsTfIdfXIV.zip GLMNETElasticNetBagOWordsTfIdf
 sampleSubmissionFile$prediction <- xgboostPrediction
 
 #Write File
-write.csv(sampleSubmissionFile, file = "xgboostBinV.csv", row.names = FALSE)
-system('zip xgboostBinV.zip xgboostBinV.csv')
+write.csv(sampleSubmissionFile, file = "xgboostBinVI.csv", row.names = FALSE)
+system('zip xgboostBinVI.zip xgboostBinVI.csv')
 
 #xgboost Slow
 sampleSubmissionFile$prediction <- xgboostPredictionSlow
 
 #Write File
-write.csv(sampleSubmissionFile, file = "xgboostSlowBinV.csv", row.names = FALSE)
-system('zip xgboostSlowBinV.zip xgboostSlowBinV.csv')
+write.csv(sampleSubmissionFile, file = "xgboostSlowBinVI.csv", row.names = FALSE)
+system('zip xgboostSlowBinVI.zip xgboostSlowBinVI.csv')
 
 #Combined submission
 sampleSubmissionFile$prediction <- apply(cbind(apply(predictionsGLMNET, 1, mean), xgboostPrediction), 1, mean)
