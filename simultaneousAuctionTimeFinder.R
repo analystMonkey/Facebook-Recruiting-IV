@@ -3,6 +3,23 @@ simultaneousAuctionTimeFinder <- function(bidderIds, bidsDt, range){
   bidderInfoDt <- bidsDt[bidder_id == bidderIds, .(auction, device, country, time)]
   bidderInfoDt$time <- as.integer64(substr(as.character(bidderInfoDt$time), 1, 16 - range))
   
+  #Bid Frequency in Auctions Counter
+  auctionFreq <- sapply(unique(bidderInfoDt$auction), function(auctionId, BidderDt){
+    
+    auctionDt <- BidderDt[auction == auctionId, .(auction, time)]
+    #Remove consecutive bids with same time, keep only one
+    quantileFrequencies <- quantile(table.integer64(auctionDt$time), c(0.05, 0.5, 0.95))
+    return(quantileFrequencies)
+    
+  }, BidderDt = bidderInfoDt)
+  
+  freqMin <- apply(auctionFreq, 1, min)
+  freqMax <- apply(auctionFreq, 1, max)
+  freqMedian <- apply(auctionFreq, 1, median)
+  freqMad <- apply(auctionFreq, 1, mad)
+  
+  bidsFrequencyStats <- c(freqMin, freqMax, freqMedian, freqMad)
+  
   #Simultaneous Auctions counter
   roundedAuctionTimes <- lapply(unique(bidderInfoDt$auction), function(auctionId, BidderDt){
     
@@ -69,5 +86,5 @@ simultaneousAuctionTimeFinder <- function(bidderIds, bidsDt, range){
   simCountries <- c(simultaneousCountries, simultaneousCountriesNormalized, simultaneousCountriesPerAuction,
                     simultaneousCountriesDispersion, simultaneousCountriesMedian)
   
-  return(c(simAuctions, simDevices, simCountries))
+  return(c(bidsFrequencyStats, simAuctions, simDevices, simCountries))
 }

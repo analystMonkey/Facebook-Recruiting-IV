@@ -1,5 +1,5 @@
 #Facebook Recruiting IV: Human or Robot?
-#Ver. 0.1.8 #various improvements + generic xgboost train function included
+#Ver. 0.1.9 #range features added + frequencies
 #Libraries, directories, options and extra functions----------------------
 require("rjson")
 require("parallel")
@@ -38,7 +38,6 @@ source(file.path(workingDirectory, "timeNumericFeatures.R"))
 source(file.path(workingDirectory, "featureLengths.R"))
 source(file.path(workingDirectory, "dispersionTimeFeatures.R"))
 source(file.path(workingDirectory, "simultaneousAuctionTimeFinder.R"))
-#source(file.path(workingDirectory, "bidsTimeFrequency.R"))
 source(file.path(workingDirectory, "multiplot.R"))
 
 #Detect available cores
@@ -86,30 +85,6 @@ auctionRanges <- lapply(unique(bids$auction), function(auctionId, bidsDt){
 }, bidsDt = bids)
 names(auctionRanges) <- as.character(unique(bids$auction))
 
-#Create combined columns with the most representative coeficient rows
-#bids$IPUrl <- paste(bids$ip, bids$url, sep = "_")
-#bids$URLAuction <- paste(bids$url, bids$auction, sep = "_")
-#bids$IPAuction <- paste(bids$auction, bids$ip, sep = "_")
-
-#save(bids, file = "bidsExtraFeatures.RData")
-
-# #Extract time frequencies from training/test 
-# freqTimeFeaturesTrain <- mclapply(train$bidder_id, bidsTimeFrequency, mc.cores = numCores,
-#                                  bidsDT = bids)
-# freqTimeFeaturesTest <- mclapply(test$bidder_id, bidsTimeFrequency, mc.cores = numCores,
-#                                 bidsDT = bids)
-# 
-# #Create a sparse matrix with the numeric data
-# freqTimeFeaturesTrain <- Matrix(do.call(rbind, freqTimeFeaturesTrain), sparse = TRUE)
-# freqTimeFeaturesTest <- Matrix(do.call(rbind, freqTimeFeaturesTest), sparse = TRUE)
-# colnames(freqTimeFeaturesTrain) <- c("frequencyMedian", "frequencyMad", "frequencyQuantiles", 
-#                                      "frequencyMedian30", "frequencyMad30", "frequencyQuantiles30")
-# colnames(freqTimeFeaturesTest) <- c("frequencyMedian", "frequencyMad", "frequencyQuantiles", 
-#                                     "frequencyMedian30", "frequencyMad30", "frequencyQuantiles30")
-# 
-# inherits(freqTimeFeaturesTrain,"sparseMatrix")
-# inherits(freqTimeFeaturesTest,"sparseMatrix")
-
 #Extract training/test time statistical data and create a table 
 numericTimeFeaturesTrain <- mclapply(train$bidder_id, dispersionTimeFeatures, mc.cores = numCores,
                                      bidsDT = bids, rangesList = auctionRanges)
@@ -123,7 +98,9 @@ numericFeaturesNames <- c("minimumMad", "minimumSd", "minimumRank", "minimumMadR
                           "maximumMad", "maximumSd", "maximumRank", "maximumMadRank",
                           "medianMad", "medianSd", "medianRank", "medianMadRank",
                           "medianAverageDeviationTimeMad", "medianAverageDeviationTimeSd", 
-                          "madRank", "madMadRank", "minRest", "maxRest", "medianRest", "madRest", 
+                          "madRank", "madMadRank", "minRangeLog", "minRangeNor", "maxRangeLog", "maxRangeNor",
+                          "medianRangeLog", "medianRangeNor", "madRangeLog", "madRangeNor",
+                          "minRest", "maxRest", "medianRest", "madRest", 
                           "quantileRest5", "quantileRest10", "quantileRest15", "quantileRest85", 
                           "quantileRest90", "quantileRest95", "minFinal", "maxFinal", "medianFinal", 
                           "madFinal", "quantileFinal5", "quantileFinal10", "quantileFinal15", 
@@ -166,7 +143,11 @@ simultaneousFeaturesTest <- mclapply(test$bidder_id, simultaneousAuctionTimeFind
 #Create a sparse matrix with the numeric data
 simultaneousFeaturesTrain <- Matrix(do.call(rbind, simultaneousFeaturesTrain), sparse = TRUE)
 simultaneousFeaturesTest <- Matrix(do.call(rbind, simultaneousFeaturesTest), sparse = TRUE)
-simultaneousFeaturesNames <- c("simultaneousBids", "simultaneousBidsNormalized", 
+simultaneousFeaturesNames <- c("freqMin5", "freqMin50", "freqMin95",
+                               "freqMax5", "freqMax50", "freqMax95",
+                               "freqMedian5", "freqMedian50", "freqMedian95", 
+                               "freqMad5", "freqMad50", "freqMad95",
+                               "simultaneousBids", "simultaneousBidsNormalized", 
                                "simultaneousBidsPerAuction", "simultaneousBidsDispersion",
                                "simultaneousBidsMedian", "simultaneousDevices", "simultaneousDevicesNormalized", 
                                "simultaneousDevicesPerAuction", "simultaneousDevicesDispersion", 
@@ -377,6 +358,10 @@ combinedCorpusSparseTest <- Matrix(data = 0, nrow = 4700,
 combinedCorpusSparseTestValid <- cbind(numFeaturesTest, corpusSparseTestValid)
 combinedCorpusSparseTest[validTestDocuments, ] <- combinedCorpusSparseTestValid
 
+#Build a xgb.DMatrix object
+DMMatrixTrain <- xgb.DMatrix(data = combinedCorpusSparseTrain, label = train$outcome)
+DMMatrixTest <- xgb.DMatrix(data = combinedCorpusSparseTest)
+
 #Normalized Numeric Features for linear classification
 scaledNumericFull <- scale(cbind(rbind(numericTimeFeaturesTrain, numericTimeFeaturesTest),
                                  rbind(uniqueFeaturesTrain, uniqueFeaturesTest),
@@ -539,10 +524,6 @@ predictionsGLMNET <- sapply(seq(1, numberOfRepeatedModels), function(modelNumber
 searchGrid <- expand.grid(subsample = c(0.66, 0.95, 1), 
                           colsample_bytree = c(0.66, 0.95, 1))
 
-#Contruct xgb.DMatrix object
-DMMatrixTrain <- xgb.DMatrix(data = combinedCorpusSparseTrain, label = train$outcome)
-DMMatrixTest <- xgb.DMatrix(data = combinedCorpusSparseTest)
-
 aucErrorsHyperparameters <- apply(searchGrid, 1, function(parameterList){
   #Extract Parameters to test
   currentSubsampleRate <- parameterList[[1]]
@@ -554,7 +535,7 @@ aucErrorsHyperparameters <- apply(searchGrid, 1, function(parameterList){
   parameterListAUC <- sapply(seq(1, numberOfRepeatedModels), function(modelNumber, train){
     
     xgboostModelCV <- xgb.cv(data = train, nrounds = 70, nfold = 5, showsd = TRUE, 
-                             metrics = "auc", verbose = TRUE, 
+                             metrics = "auc", verbose = TRUE, "eval_metric" = "auc",
                              "objective" = "binary:logistic", "max.depth" = 80, 
                              "nthread" = numCores, "set.seed" = modelNumber, 
                              "subsample" = currentSubsampleRate, "colsample_bytree" = currentColsampleRate)
@@ -581,10 +562,6 @@ aucErrorsHyperparameters <- apply(searchGrid, 1, function(parameterList){
   
   return(c(parameterListAUC, currentSubsampleRate, currentColsampleRate))
 })
-
-#Contruct xgb.DMatrix object
-DMMatrixTrain <- xgb.DMatrix(data = combinedCorpusSparseTrain, label = train$outcome)
-DMMatrixTest <- xgb.DMatrix(data = combinedCorpusSparseTest)
 
 #Cross validation
 numberOfRepeatedModels <- 10
@@ -631,12 +608,12 @@ numberOfRepeatedModels <- 5
 customParamList <- list(eval_metric = "auc", objective = "binary:logistic", max_depth = 80)
 xgboostMultiPredictions <- sapply(seq(1, numberOfRepeatedModels), function(modelNumber, iter, train, test, paramList){
   
-  xgboostModel <- xgb.train(params = paramList, data = train, nrounds = iter + 20, verbose = 2)
+  #xgboostModel <- xgb.train(params = paramList, data = train, nrounds = iter + 20, verbose = 2)
   
-#   xgboostModel <- xgboost(data = train, nrounds = iter + 20,
-#                           showsd = TRUE, metrics = "auc", verbose = TRUE, 
-#                           "objective" = "binary:logistic", "max.depth" = 80, "nthread" = numCores,
-#                           "set.seed" = modelNumber)
+  xgboostModel <- xgboost(data = train, nrounds = iter + 20,
+                          showsd = TRUE, metrics = "auc", verbose = TRUE, "eval_metric" = "auc",
+                          "objective" = "binary:logistic", "max.depth" = 80, "nthread" = numCores,
+                          "set.seed" = modelNumber, "colsample_bytree" = 0.95)
    
   model <- xgb.dump(xgboostModel, with.stats = T)
   
@@ -705,8 +682,8 @@ system('zip GLMNETElasticNetBagOWordsTfIdfXIV.zip GLMNETElasticNetBagOWordsTfIdf
 sampleSubmissionFile$prediction <- xgboostPrediction
 
 #Write File
-write.csv(sampleSubmissionFile, file = "xgboostBinVI.csv", row.names = FALSE)
-system('zip xgboostBinVI.zip xgboostBinVI.csv')
+write.csv(sampleSubmissionFile, file = "xgboostBinVII.csv", row.names = FALSE)
+system('zip xgboostBinVII.zip xgboostBinVII.csv')
 
 #xgboost Slow
 sampleSubmissionFile$prediction <- xgboostPredictionSlow

@@ -19,11 +19,31 @@ dispersionTimeFeatures <- function(bidderId, bidsDT, rangesList){
     numericValues <- c(minimum, maximum, median, medianAverageDeviationTime)
     
   }else{
-    numericValues <- rep(c(0, 0, 500, 500), 4)
+    numericValues <- rep(c(0, 0, 1000, 1000), 4)
   }
   
   #Resting Time Features
   bidsTimeAuctions <- bidsDT[bidder_id == bidderId, .(time, auction)]
+  
+  rangesAuctions <- sapply(unique(bidsTimeAuctions$auction), function(auctionBidder, rangeAuctions){
+    if(rangeAuctions[[auctionBidder]][3] != 0){
+      timesInAuction <- bidsTimeAuctions[auction == auctionBidder, time]
+      rangeAuctionInt64 <- max.integer64(timesInAuction) - min.integer64(timesInAuction)
+      rangeActionInAuction <- ifelse(rangeAuctionInt64 == 0, 0, log(rangeAuctionInt64))
+      rangeActionNormalized <- rangeAuctionInt64 / rangeAuctions[[auctionBidder]][3]
+    }else{
+      rangeActionInAuction <- 0 
+      rangeActionNormalized <- 0
+    }
+    return(c(rangeActionInAuction, rangeActionNormalized))
+  }, rangeAuctions = rangesList)
+  
+  minRange <- apply(rangesAuctions, 1, min)
+  maxRange <- apply(rangesAuctions, 1, max)
+  medianRange <- apply(rangesAuctions, 1, median)
+  madRange <- apply(rangesAuctions, 1, mad)
+  
+  rangeFeatures <- c(minRange, maxRange, medianRange, madRange)
   
   restPercentages <- sapply(unique(bidsTimeAuctions$auction), function(auctionBidder, rangeAuctions){
     if(rangeAuctions[[auctionBidder]][3] != 0){
@@ -89,6 +109,7 @@ dispersionTimeFeatures <- function(bidderId, bidsDT, rangesList){
   
   linearModelFeaturesFin <- c(interceptDataFinal, slopeDataFinal, devianceDataFinal, quantResidualsDataFinal)
   
-  return(c(numericValues, restFeatures, finalFeatures, linearModelFeatures, linearModelFeaturesFin))
+  return(c(numericValues, rangeFeatures, restFeatures, finalFeatures, 
+           linearModelFeatures, linearModelFeaturesFin))
   
 }
