@@ -1,5 +1,5 @@
 #Facebook Recruiting IV: Human or Robot?
-#Ver. 0.1.9 #range features added + frequencies
+#Ver. 0.1.10 #countries added, unshared terms in boilerplate eliminated
 #Libraries, directories, options and extra functions----------------------
 require("rjson")
 require("parallel")
@@ -25,12 +25,6 @@ setwd(workingDirectory)
 dataDirectory <- directories$dataDirectory
 #EDA Plots location
 EDAPlotsLoc <- directories$EDALoc
-#h2o location
-h2o.jarLoc <- directories$h2o.jarLoc
-#vw77Dir = workingDirectory
-vwDataDirectory <- file.path(directories$dataDirectory, "vw")
-hipersearchScriptLoc <- directories$vwSearchLoc
-vw77Dir <- directories$vwLoc
 
 #Define extra functions
 source(file.path(workingDirectory, "bidderId2Boilerplate.R"))
@@ -61,6 +55,8 @@ bids <- bids[order(rank(-time))]
 
 #No Country change to "NoCountry" string
 bids$country[bids$country == ""] <- "NoCountry"
+#Add more letters to countries to avoid deletion by the tm package
+bids$country <- paste0("Country", bids$country)
 
 #Feature Engineering--------------------
 #Auction Time Medians + Median Average Deviations
@@ -301,7 +297,30 @@ multiplot(robotRestPlots[[1]], robotRestPlots[[2]], robotRestPlots[[3]],
           robotRestPlots[[4]], robotRestPlots[[5]], robotRestPlots[[6]], cols = 2)
 
 #Text processing / sparse matrix creation-------------
-#Use TM Package to create corpus with TfIdf
+#Find Common Terms in training corpus and testing corpus
+corpusTrain <- Corpus(VectorSource(boilerplateTrain))
+corpusTest <- Corpus(VectorSource(boilerplateTest))
+trainTerms <- Terms(DocumentTermMatrix(corpusTrain))
+testTerms <- Terms(DocumentTermMatrix(corpusTest))
+
+commonTerms <- intersect(trainTerms, testTerms)
+
+rm(corpusTrain, corpusTest, trainTerms, testTerms)
+
+#Transform the training and testing boilerplates by only selecting common terms from train and test
+selectCommonTerms <- function(document, commonTermsList){
+  documentAsCharacterString <- unlist(strsplit(document, split = " "))
+  documentAsCharacterString <- documentAsCharacterString[documentAsCharacterString %in% commonTerms]
+  return(paste(documentAsCharacterString, collapse = " "))
+}
+
+boilerplateTrain <- lapply(boilerplateTrain, selectCommonTerms, commonTermsList = commonTerms)
+boilerplateTest <- lapply(boilerplateTest, selectCommonTerms, commonTermsList = commonTerms)
+
+boilerplateTrain <- do.call(c, boilerplateTrain)
+boilerplateTest <- do.call(c, boilerplateTest)
+
+#Use TM Package to create a combined corpus with weighting and using only the shared terms
 # corpusSparse <- removeSparseTerms(weightTfIdf(DocumentTermMatrix
 #                                               (Corpus(VectorSource(c(boilerplateTrain, boilerplateTest)))), normalize = TRUE),
 #                                   sparse = 0.9999)
@@ -314,9 +333,9 @@ multiplot(robotRestPlots[[1]], robotRestPlots[[2]], robotRestPlots[[3]],
 #                                               (Corpus(VectorSource(c(boilerplateTrain, boilerplateTest)))), spec = "npc"),
 #                                   sparse = 0.9999)
 #Use TM Package to create corpus with binary weighting
-corpusSparse <- removeSparseTerms(weightBin(DocumentTermMatrix
-                                            (Corpus(VectorSource(c(boilerplateTrain, boilerplateTest))))),
-                                  sparse = 0.9999)
+corpusSparse <- DocumentTermMatrix(c(corpusTrain, corpusTest),
+                                   control = list(dictionary = commonTerms, 
+                                                  weighting = weightBin))
 #Use TM Package to create corpus with SMART weighting - b-n-cos
 # corpusSparse <- removeSparseTerms(weightSMART(DocumentTermMatrix
 #                                               (Corpus(VectorSource(c(boilerplateTrain, boilerplateTest)))), spec = "bnc"),
