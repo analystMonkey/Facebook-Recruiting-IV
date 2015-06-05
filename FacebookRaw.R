@@ -1,5 +1,5 @@
 #Facebook Recruiting IV: Human or Robot?
-#Ver. 0.1.10 #countries added, unshared terms in boilerplate eliminated
+#Ver. 0.1.11 #range, rest and final derivatives added + minor changes in EDA and new data matrices creation
 #Libraries, directories, options and extra functions----------------------
 require("rjson")
 require("parallel")
@@ -37,7 +37,7 @@ source(file.path(workingDirectory, "multiplot.R"))
 #Detect available cores
 numCores <- detectCores()
 
-#Load Raw Data & data transformation----------------------
+#Load Raw Data & data transformations----------------------
 train <- fread(file.path(dataDirectory, directories$trainFile), verbose = TRUE)
 test <- fread(file.path(dataDirectory, directories$testFile), verbose = TRUE)
 bids <- fread(file.path(dataDirectory, directories$bids), verbose = TRUE)
@@ -54,11 +54,10 @@ test <- test[test$bidder_id %in% bids$bidder_id]
 bids <- bids[order(rank(-time))]
 
 #No Country change to "NoCountry" string
-bids$country[bids$country == ""] <- "NoCountry"
+bids$country[bids$country == ""] <- "nocountry"
 #Add more letters to countries to avoid deletion by the tm package
-bids$country <- paste0("Country", bids$country)
+bids$country <- paste0("country", bids$country)
 
-#Feature Engineering--------------------
 #Auction Time Medians + Median Average Deviations
 auctionsScoresTable <- mclapply(unique(bids$auction), timeNumericFeatures, mc.cores = numCores,
                                 bidsDt = bids)
@@ -71,6 +70,10 @@ bids <- merge(bids, auctionsScoresTable, by = "bid_id")
 bids$sequential[is.na(bids$sequential)] <- FALSE
 rm(auctionsScoresTable)
 
+#Save Progress
+#save(bids, file = "bids.RData")
+
+#Feature Engineering--------------------
 #Extract Resting time (inactive time before the first bid in an auction)
 auctionRanges <- lapply(unique(bids$auction), function(auctionId, bidsDt){  
   bidsTimes <- bidsDt[auction == auctionId, time] 
@@ -96,11 +99,18 @@ numericFeaturesNames <- c("minimumMad", "minimumSd", "minimumRank", "minimumMadR
                           "medianAverageDeviationTimeMad", "medianAverageDeviationTimeSd", 
                           "madRank", "madMadRank", "minRangeLog", "minRangeNor", "maxRangeLog", "maxRangeNor",
                           "medianRangeLog", "medianRangeNor", "madRangeLog", "madRangeNor",
+                          "min1DerRange", "max1DerRange", "mad1DerRange", "quantile1DerRang10",
+                          "quantile1DerRang25", "quantile1DerRang50", "quantile1DerRang75", "quantile1DerRang90",
                           "minRest", "maxRest", "medianRest", "madRest", 
                           "quantileRest5", "quantileRest10", "quantileRest15", "quantileRest85", 
-                          "quantileRest90", "quantileRest95", "minFinal", "maxFinal", "medianFinal", 
+                          "quantileRest90", "quantileRest95", 
+                          "min1DerRest", "max1DerRest", "mad1DerRest", "quantile1DerRest10",
+                          "quantile1DerRest25", "quantile1DerRest50", "quantile1DerRest75", "quantile1DerRest90",
+                          "minFinal", "maxFinal", "medianFinal", 
                           "madFinal", "quantileFinal5", "quantileFinal10", "quantileFinal15", 
                           "quantileFinal85", "quantileFinal90", "quantileFinal95", 
+                          "min1DerFinal", "max1DerFinal", "mad1DerFinal", "quantile1DerFinal10",
+                          "quantile1DerFinal25", "quantile1DerFinal50", "quantile1DerFinal75", "quantile1DerFinal90",
                           "interceptData", "slopeData", "devianceData", "quantResidualsData1",
                           "quantResidualsData20", "quantResidualsData50", "quantResidualsData80", 
                           "quantResidualsData99", "interceptDataFinal", "slopeDataFinal", 
@@ -178,6 +188,9 @@ bestMods <- summary(linearBestModels)
 bestNumberOfPredictors <- which.min(bestMods$cp)
 plot(bestMods$cp, xlab="Number of Variables", ylab="CP Error", main ="Best Number of Features")
 points(bestNumberOfPredictors, bestMods$cp[bestNumberOfPredictors], pch=20, col="red")
+#Save Plot
+dev.print(file = file.path(EDAPlotsLoc , "LinearFeatureImportance"),
+          device = png, width = 1200)
 
 #Name of the most predictive rankings
 predictors1 <- as.data.frame(bestMods$which)
@@ -205,10 +218,15 @@ plotAuctions <- function(bidder, bidsDt){
 #Humans
 humanPlots <- lapply(randomHumans, plotAuctions, bidsDt = bids)
 multiplot(humanPlots[[1]], humanPlots[[2]], humanPlots[[3]], humanPlots[[4]], humanPlots[[5]], humanPlots[[6]], cols = 2)
-
+#Save Plot
+dev.print(file = file.path(EDAPlotsLoc , "TimeHumanAuctions"),
+          device = png, width = 1200)
 #Robots
 robotPlots <- lapply(randomRobots, plotAuctions, bidsDt = bids)
 multiplot(robotPlots[[1]], robotPlots[[2]], robotPlots[[3]], robotPlots[[4]], robotPlots[[5]], robotPlots[[6]], cols = 2)
+#Save Plot
+dev.print(file = file.path(EDAPlotsLoc , "TimeRoboAuctions"),
+          device = png, width = 1200)
 
 #EDA #3 Simultaneous bids time frame search--------------------------
 #long search, it takes approx 2h run only for EDA)
@@ -257,6 +275,9 @@ ggplot() + geom_line(data = ggplotData, aes(x = variables, y = range3, group = 1
   geom_line(data = ggplotData, aes(x = variables, y = range11, group = 1, color = "Range11")) + 
   geom_line(data = ggplotData, aes(x = variables, y = range12, group = 1, color = "Range12")) + 
   geom_line(data = ggplotData, aes(x = variables, y = range13, group = 1, color = "Range13")) 
+#Save Plot
+dev.print(file = file.path(EDAPlotsLoc , "RangesCorrelations"),
+          device = png, width = 1200)
 
 #EDA #4 Resting time learning robots vs. humans--------------------------
 set.seed(1000007)
@@ -291,10 +312,16 @@ restingPlotDataExtract <- function(bidderId, bidsDT){
 humanRestPlots <- lapply(randomHumans, restingPlotDataExtract, bidsDT = bids)
 multiplot(humanRestPlots[[1]], humanRestPlots[[2]], humanRestPlots[[3]],
           humanRestPlots[[4]], humanRestPlots[[5]], humanRestPlots[[6]], cols = 2)
+#Save Plot
+dev.print(file = file.path(EDAPlotsLoc , "HumanLearning"),
+          device = png, width = 1200)
 
 robotRestPlots <- lapply(randomRobots, restingPlotDataExtract, bidsDT = bids)
 multiplot(robotRestPlots[[1]], robotRestPlots[[2]], robotRestPlots[[3]],
           robotRestPlots[[4]], robotRestPlots[[5]], robotRestPlots[[6]], cols = 2)
+#Save Plot
+dev.print(file = file.path(EDAPlotsLoc , "RoboLearning"),
+          device = png, width = 1200)
 
 #Text processing / sparse matrix creation-------------
 #Find Common Terms in training corpus and testing corpus
@@ -321,35 +348,22 @@ boilerplateTrain <- do.call(c, boilerplateTrain)
 boilerplateTest <- do.call(c, boilerplateTest)
 
 #Use TM Package to create a combined corpus with weighting and using only the shared terms
-# corpusSparse <- removeSparseTerms(weightTfIdf(DocumentTermMatrix
-#                                               (Corpus(VectorSource(c(boilerplateTrain, boilerplateTest)))), normalize = TRUE),
-#                                   sparse = 0.9999)
-#Use TM Package to create corpus with SMART weighting - tf-prob(idf)-n
-# corpusSparse <- removeSparseTerms(weightSMART(DocumentTermMatrix
-#                                               (Corpus(VectorSource(c(boilerplateTrain, boilerplateTest)))), spec = "npn"),
-#                                   sparse = 0.9999)
-#Use TM Package to create corpus with SMART weighting - tf-prob(idf)-c
-# corpusSparse <- removeSparseTerms(weightSMART(DocumentTermMatrix
-#                                               (Corpus(VectorSource(c(boilerplateTrain, boilerplateTest)))), spec = "npc"),
-#                                   sparse = 0.9999)
+# corpusSparse <- DocumentTermMatrix(Corpus(VectorSource(c(boilerplateTrain, boilerplateTest))),
+#                                    control = list(weighting = function(x)weightTfIdf(x, normalize = TRUE)))
 #Use TM Package to create corpus with binary weighting
-corpusSparse <- DocumentTermMatrix(c(corpusTrain, corpusTest),
-                                   control = list(dictionary = commonTerms, 
-                                                  weighting = weightBin))
-#Use TM Package to create corpus with SMART weighting - b-n-cos
-# corpusSparse <- removeSparseTerms(weightSMART(DocumentTermMatrix
-#                                               (Corpus(VectorSource(c(boilerplateTrain, boilerplateTest)))), spec = "bnc"),
-#                                   sparse = 0.9999)
-#Use TM Package to create corpus with SMART weighting - b-idf-n
-# corpusSparse <- removeSparseTerms(weightSMART(DocumentTermMatrix
-#                                               (Corpus(VectorSource(c(boilerplateTrain, boilerplateTest)))), spec = "btn"),
-#                                   sparse = 0.9999)
-#Use TM Package to create corpus with SMART weighting - b-idf-cos
-# corpusSparse <- removeSparseTerms(weightSMART(DocumentTermMatrix
-#                                               (Corpus(VectorSource(c(boilerplateTrain, boilerplateTest)))), spec = "btn"),
-#                                   sparse = 0.9999)
+corpusSparse <- DocumentTermMatrix(Corpus(VectorSource(c(boilerplateTrain, boilerplateTest))),
+                                   control = list(weighting = function(x)weightBin(x)))
+# #Use TM Package to create corpus with SMART weighting - b-n-cos
+# corpusSparse <- DocumentTermMatrix(Corpus(VectorSource(c(boilerplateTrain, boilerplateTest))),
+#                                    control = list(weighting = function(x)weightSMART(x, spec = "bnc")))
+# #Use TM Package to create corpus with SMART weighting - b-idf-n
+# corpusSparse <- DocumentTermMatrix(Corpus(VectorSource(c(boilerplateTrain, boilerplateTest))),
+#                                    control = list(weighting = function(x)weightSMART(x, spec = "btn")))
+# #Use TM Package to create corpus with SMART weighting - b-idf-cos
+# corpusSparse <- DocumentTermMatrix(Corpus(VectorSource(c(boilerplateTrain, boilerplateTest))),
+#                                    control = list(weighting = function(x)weightSMART(x, spec = "btc")))
 
-corpusTerms <- corpusSparse$dimnames$Terms
+corpusTerms <- Terms(corpusSparse)
 engineeredFeaturesNames <- c(colnames(numericTimeFeaturesTrain), 
                              colnames(uniqueFeaturesTrain), 
                              colnames(simultaneousFeaturesTrain))
@@ -582,6 +596,11 @@ aucErrorsHyperparameters <- apply(searchGrid, 1, function(parameterList){
   return(c(parameterListAUC, currentSubsampleRate, currentColsampleRate))
 })
 
+ggplotDataBestParams <- as.data.frame(cbind(apply(aucErrorsHyperparameters[seq(1, 9, 2), ], 2, mean), 
+                                            paste(searchGrid[, 1], searchGrid[, 2], sep = "-")))
+names(ggplotDataBestParams) <- c("MeanAuc", "Params")
+ggplot(data = ggplotDataBestParams, aes(y = MeanAuc, x = Params, group = 1)) + geom_line()
+
 #Cross validation
 numberOfRepeatedModels <- 10
 xgboostAUC <- sapply(seq(1, numberOfRepeatedModels), function(modelNumber, train){
@@ -623,7 +642,7 @@ dev.print(file = file.path(EDAPlotsLoc , "Repeated10FoldCVPerformance"),
           device = png, width = 1200)
 
 #Full xgboost model
-numberOfRepeatedModels <- 5
+numberOfRepeatedModels <- 10
 customParamList <- list(eval_metric = "auc", objective = "binary:logistic", max_depth = 80)
 xgboostMultiPredictions <- sapply(seq(1, numberOfRepeatedModels), function(modelNumber, iter, train, test, paramList){
   
@@ -631,7 +650,7 @@ xgboostMultiPredictions <- sapply(seq(1, numberOfRepeatedModels), function(model
   
   xgboostModel <- xgboost(data = train, nrounds = iter + 20,
                           showsd = TRUE, metrics = "auc", verbose = TRUE, "eval_metric" = "auc",
-                          "objective" = "binary:logistic", "max.depth" = 80, "nthread" = numCores,
+                          "objective" = "binary:logistic", "max.depth" = 80, 
                           "set.seed" = modelNumber, "colsample_bytree" = 0.95)
    
   model <- xgb.dump(xgboostModel, with.stats = T)
@@ -656,7 +675,7 @@ xgboostPrediction <- apply(xgboostMultiPredictions, 1, mean)
 
 #Cross Validation Slow Learining
 xgboostModelCV <- xgb.cv(data = DMMatrixTrain, nrounds = 3500, nfold = 5, showsd = TRUE, 
-                         metrics = "auc", verbose = TRUE, "eta" = 0.001,
+                         metrics = "auc", verbose = TRUE, "eta" = 0.003,
                          "objective" = "binary:logistic", "max.depth" = 80, 
                          "nthread" = numCores, "set.seed" = 10001000)
 
@@ -668,8 +687,8 @@ print(ggplot(data = holdoutAucScores, aes(x = iteration, y = test.auc.mean)) + g
 
 #Full Model with slow learning (eta = 0.003)
 xgboostModelSlow <- xgboost(data = DMMatrixTrain, nrounds = 3500,
-                            showsd = TRUE, metrics = "auc", verbose = TRUE, "eta" = 0.001,
-                            "objective" = "binary:logistic", "max.depth" = 80, "nthread" = numCores,
+                            showsd = TRUE, metrics = "auc", verbose = TRUE, "eta" = 0.003,
+                            "objective" = "binary:logistic", "max.depth" = 80, 
                             "set.seed" = 10001001)
 
 model <- xgb.dump(xgboostModelSlow, with.stats = T)
@@ -701,15 +720,15 @@ system('zip GLMNETElasticNetBagOWordsTfIdfXIV.zip GLMNETElasticNetBagOWordsTfIdf
 sampleSubmissionFile$prediction <- xgboostPrediction
 
 #Write File
-write.csv(sampleSubmissionFile, file = "xgboostBinVII.csv", row.names = FALSE)
-system('zip xgboostBinVII.zip xgboostBinVII.csv')
+write.csv(sampleSubmissionFile, file = "xgboostBinIdfVIII.csv", row.names = FALSE)
+system('zip xgboostBinIdfVIII.zip xgboostBinIdfVIII.csv')
 
 #xgboost Slow
 sampleSubmissionFile$prediction <- xgboostPredictionSlow
 
 #Write File
-write.csv(sampleSubmissionFile, file = "xgboostSlowBinVI.csv", row.names = FALSE)
-system('zip xgboostSlowBinVI.zip xgboostSlowBinVI.csv')
+write.csv(sampleSubmissionFile, file = "xgboostSlowBinIdfVIII.csv", row.names = FALSE)
+system('zip xgboostSlowBinIdfVIII.zip xgboostSlowBinIdfVIII.csv')
 
 #Combined submission
 sampleSubmissionFile$prediction <- apply(cbind(apply(predictionsGLMNET, 1, mean), xgboostPrediction), 1, mean)
