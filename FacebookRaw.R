@@ -1,5 +1,5 @@
 #Facebook Recruiting IV: Human or Robot?
-#Ver. 0.1.11 #range, rest and final derivatives added + minor changes in EDA and new data matrices creation
+#Ver. 0.1.12 #markdown file included plus minor bugs fixed
 #Libraries, directories, options and extra functions----------------------
 require("rjson")
 require("parallel")
@@ -45,6 +45,7 @@ bids <- fread(file.path(dataDirectory, directories$bids), verbose = TRUE)
 #Remove training data that cannot be found in the bids data table
 train <- train[train$bidder_id %in% bids$bidder_id]
 #Shuffle Training Dataset
+set.seed(1011011)
 train <- train[sample(1:nrow(train), nrow(train))]
 #Remove testing data that cannot be found in the bids data table
 validTestDocuments <- which(test$bidder_id %in% bids$bidder_id)
@@ -71,6 +72,9 @@ bids$sequential[is.na(bids$sequential)] <- FALSE
 rm(auctionsScoresTable)
 
 #Save Progress
+#save(train, file = "trainTrimmed.RData")
+#save(test, file = "testTrimmed.RData")
+#save(validTestDocuments, file = "validTestDocuments.RData")
 #save(bids, file = "bids.RData")
 
 #Feature Engineering--------------------
@@ -181,7 +185,7 @@ rm(bids)
 numericData <- as.matrix(scale(cbind(uniqueFeaturesTrain, numericTimeFeaturesTrain, simultaneousFeaturesTrain)))
 
 linearBestModels <- regsubsets(x = numericData, y = as.factor(train$outcome), 
-                               method = "forward", nvmax = 50)
+                               method = "forward", nvmax = 70)
 
 #Plot the best number of predictors
 bestMods <- summary(linearBestModels)
@@ -231,13 +235,17 @@ dev.print(file = file.path(EDAPlotsLoc , "TimeRoboAuctions"),
 #EDA #3 Simultaneous bids time frame search--------------------------
 #long search, it takes approx 2h run only for EDA)
 searchRanges <- c(1, 3, 5, 9, 10, 11, 12, 13)
-variablesNames <- c("simultaneousBids", "simultaneousBidsNormalized", 
+variablesNames <- c("freqMin5", "freqMin50", "freqMin95",
+                    "freqMax5", "freqMax50", "freqMax95",
+                    "freqMedian5", "freqMedian50", "freqMedian95", 
+                    "freqMad5", "freqMad50", "freqMad95",
+                    "simultaneousBids", "simultaneousBidsNormalized", 
                     "simultaneousBidsPerAuction", "simultaneousBidsDispersion",
                     "simultaneousBidsMedian", "simultaneousDevices", "simultaneousDevicesNormalized", 
                     "simultaneousDevicesPerAuction", "simultaneousDevicesDispersion", 
                     "simultaneousDevicesMedian", "simultaneousCountries", "simultaneousCountriesNormalized",
                     "simultaneousCountriesPerAuction", "simultaneousCountriesDispersion", 
-                    "simultaneousCountriesMedian", "BotOrNot")
+                    "simultaneousCountriesMedian")
 
 rangeCorrelations <- sapply(searchRanges, function(range2Search, trainDt, bidsDtSearch){
   
@@ -257,7 +265,7 @@ rangeCorrelations <- sapply(searchRanges, function(range2Search, trainDt, bidsDt
   simDeviceNorm <- ggplot(data = ggplotData, aes(x = simultaneousDevicesNormalized, y = BotOrNot, colour = BotOrNot)) + geom_point()  
   simCountriesNorm <- ggplot(data = ggplotData, aes(x = simultaneousCountriesNormalized, y = BotOrNot, colour = BotOrNot)) + geom_point() 
   
-  print(multiplot(simBidsNorm, simDeviceNorm, simCountriesNorm, cols = 2))
+  multiplot(simBidsNorm, simDeviceNorm, simCountriesNorm, cols = 2)
   rm(simultaneousBids, simBidsNorm, simDeviceNorm, simCountriesNor, ggplotData)
   
   return(c(range2Search, correlations))
@@ -325,43 +333,38 @@ dev.print(file = file.path(EDAPlotsLoc , "RoboLearning"),
 
 #Text processing / sparse matrix creation-------------
 #Find Common Terms in training corpus and testing corpus
-corpusTrain <- Corpus(VectorSource(boilerplateTrain))
-corpusTest <- Corpus(VectorSource(boilerplateTest))
-trainTerms <- Terms(DocumentTermMatrix(corpusTrain))
-testTerms <- Terms(DocumentTermMatrix(corpusTest))
-
-commonTerms <- intersect(trainTerms, testTerms)
-
-rm(corpusTrain, corpusTest, trainTerms, testTerms)
-
-#Transform the training and testing boilerplates by only selecting common terms from train and test
-selectCommonTerms <- function(document, commonTermsList){
-  documentAsCharacterString <- unlist(strsplit(document, split = " "))
-  documentAsCharacterString <- documentAsCharacterString[documentAsCharacterString %in% commonTerms]
-  return(paste(documentAsCharacterString, collapse = " "))
-}
-
-boilerplateTrain <- lapply(boilerplateTrain, selectCommonTerms, commonTermsList = commonTerms)
-boilerplateTest <- lapply(boilerplateTest, selectCommonTerms, commonTermsList = commonTerms)
-
-boilerplateTrain <- do.call(c, boilerplateTrain)
-boilerplateTest <- do.call(c, boilerplateTest)
+# corpusTrain <- Corpus(VectorSource(boilerplateTrain))
+# corpusTest <- Corpus(VectorSource(boilerplateTest))
+# trainTerms <- Terms(DocumentTermMatrix(corpusTrain))
+# testTerms <- Terms(DocumentTermMatrix(corpusTest))
+# 
+# commonTerms <- intersect(trainTerms, testTerms)
+# 
+# rm(corpusTrain, corpusTest, trainTerms, testTerms)
+# 
+# #Transform the training and testing boilerplates by only selecting common terms from train and test
+# selectCommonTerms <- function(document, commonTermsList){
+#   documentAsCharacterString <- unlist(strsplit(document, split = " "))
+#   documentAsCharacterString <- documentAsCharacterString[documentAsCharacterString %in% commonTerms]
+#   return(paste(documentAsCharacterString, collapse = " "))
+# }
+# 
+# boilerplateTrain <- lapply(boilerplateTrain, selectCommonTerms, commonTermsList = commonTerms)
+# boilerplateTest <- lapply(boilerplateTest, selectCommonTerms, commonTermsList = commonTerms)
+# 
+# boilerplateTrain <- do.call(c, boilerplateTrain)
+# boilerplateTest <- do.call(c, boilerplateTest)
 
 #Use TM Package to create a combined corpus with weighting and using only the shared terms
-# corpusSparse <- DocumentTermMatrix(Corpus(VectorSource(c(boilerplateTrain, boilerplateTest))),
-#                                    control = list(weighting = function(x)weightTfIdf(x, normalize = TRUE)))
 #Use TM Package to create corpus with binary weighting
-corpusSparse <- DocumentTermMatrix(Corpus(VectorSource(c(boilerplateTrain, boilerplateTest))),
-                                   control = list(weighting = function(x)weightBin(x)))
+# corpusSparse <- removeSparseTerms(DocumentTermMatrix(Corpus(VectorSource(c(boilerplateTrain, boilerplateTest))),
+#                                                      control = list(weighting = function(x)weightBin(x))), sparse = 0.9998)
 # #Use TM Package to create corpus with SMART weighting - b-n-cos
-# corpusSparse <- DocumentTermMatrix(Corpus(VectorSource(c(boilerplateTrain, boilerplateTest))),
-#                                    control = list(weighting = function(x)weightSMART(x, spec = "bnc")))
+# corpusSparse <- removeSparseTerms(DocumentTermMatrix(Corpus(VectorSource(c(boilerplateTrain, boilerplateTest))),
+#                                                      control = list(weighting = function(x)weightSMART(x, spec = "bnc"))), sparse = 0.9998)
 # #Use TM Package to create corpus with SMART weighting - b-idf-n
-# corpusSparse <- DocumentTermMatrix(Corpus(VectorSource(c(boilerplateTrain, boilerplateTest))),
-#                                    control = list(weighting = function(x)weightSMART(x, spec = "btn")))
-# #Use TM Package to create corpus with SMART weighting - b-idf-cos
-# corpusSparse <- DocumentTermMatrix(Corpus(VectorSource(c(boilerplateTrain, boilerplateTest))),
-#                                    control = list(weighting = function(x)weightSMART(x, spec = "btc")))
+corpusSparse <- removeSparseTerms(DocumentTermMatrix(Corpus(VectorSource(c(boilerplateTrain, boilerplateTest))),
+                                                     control = list(weighting = function(x)weightSMART(x, spec = "btn"))), sparse = 0.9998)
 
 corpusTerms <- Terms(corpusSparse)
 engineeredFeaturesNames <- c(colnames(numericTimeFeaturesTrain), 
@@ -386,10 +389,10 @@ numFeaturesTest <- cbind(numericTimeFeaturesTest, uniqueFeaturesTest, simultaneo
 
 combinedCorpusSparseTrain <- cbind(numFeaturesTrain, corpusSparseTrain)
 combinedCorpusSparseTest <- Matrix(data = 0, nrow = 4700, 
-                                   ncol = ncol(numFeaturesTrain) + ncol(corpusSparseTrain),
+                                   ncol = ncol(numFeaturesTest),
                                    sparse = TRUE)
-combinedCorpusSparseTestValid <- cbind(numFeaturesTest, corpusSparseTestValid)
-combinedCorpusSparseTest[validTestDocuments, ] <- combinedCorpusSparseTestValid
+combinedCorpusSparseTest[validTestDocuments, ] <- numFeaturesTest
+combinedCorpusSparseTest <- cbind(combinedCorpusSparseTest, corpusSparseTest)
 
 #Build a xgb.DMatrix object
 DMMatrixTrain <- xgb.DMatrix(data = combinedCorpusSparseTrain, label = train$outcome)
@@ -554,8 +557,8 @@ predictionsGLMNET <- sapply(seq(1, numberOfRepeatedModels), function(modelNumber
 ##Xgboost
 #Hyperparameter Search
 #Create search grid
-searchGrid <- expand.grid(subsample = c(0.66, 0.95, 1), 
-                          colsample_bytree = c(0.66, 0.95, 1))
+searchGrid <- expand.grid(subsample = c(0.85, 0.95, 1), 
+                          colsample_bytree = c(0.85, 0.95, 1))
 
 aucErrorsHyperparameters <- apply(searchGrid, 1, function(parameterList){
   #Extract Parameters to test
@@ -675,8 +678,9 @@ xgboostPrediction <- apply(xgboostMultiPredictions, 1, mean)
 
 #Cross Validation Slow Learining
 xgboostModelCV <- xgb.cv(data = DMMatrixTrain, nrounds = 3500, nfold = 5, showsd = TRUE, 
-                         metrics = "auc", verbose = TRUE, "eta" = 0.003,
+                         metrics = "auc", verbose = TRUE, "eta" = 0.003, "eval_metric" = "auc",
                          "objective" = "binary:logistic", "max.depth" = 80, 
+                         "colsample_bytree" = 0.95,
                          "nthread" = numCores, "set.seed" = 10001000)
 
 #Plot the progress of the model
@@ -686,9 +690,10 @@ holdoutAucScores$iteration <- seq(1, nrow(holdoutAucScores))
 print(ggplot(data = holdoutAucScores, aes(x = iteration, y = test.auc.mean)) + geom_line())
 
 #Full Model with slow learning (eta = 0.003)
-xgboostModelSlow <- xgboost(data = DMMatrixTrain, nrounds = 3500,
-                            showsd = TRUE, metrics = "auc", verbose = TRUE, "eta" = 0.003,
-                            "objective" = "binary:logistic", "max.depth" = 80, 
+xgboostModelSlow <- xgboost(data = DMMatrixTrain, nrounds = 6000,
+                            showsd = TRUE, metrics = "auc", verbose = TRUE, "eta" = 0.001,
+                            "objective" = "binary:logistic", "max.depth" = 80, "eval_metric" = "auc",
+                            "colsample_bytree" = 0.95,
                             "set.seed" = 10001001)
 
 model <- xgb.dump(xgboostModelSlow, with.stats = T)
@@ -720,15 +725,15 @@ system('zip GLMNETElasticNetBagOWordsTfIdfXIV.zip GLMNETElasticNetBagOWordsTfIdf
 sampleSubmissionFile$prediction <- xgboostPrediction
 
 #Write File
-write.csv(sampleSubmissionFile, file = "xgboostBinIdfVIII.csv", row.names = FALSE)
-system('zip xgboostBinIdfVIII.zip xgboostBinIdfVIII.csv')
+write.csv(sampleSubmissionFile, file = "xgboostBinIdfVX.csv", row.names = FALSE)
+system('zip xgboostBinIdfX.zip xgboostBinIdfX.csv')
 
 #xgboost Slow
 sampleSubmissionFile$prediction <- xgboostPredictionSlow
 
 #Write File
-write.csv(sampleSubmissionFile, file = "xgboostSlowBinIdfVIII.csv", row.names = FALSE)
-system('zip xgboostSlowBinIdfVIII.zip xgboostSlowBinIdfVIII.csv')
+write.csv(sampleSubmissionFile, file = "xgboostSlowBinIdfX1-1.csv", row.names = FALSE)
+system('zip xgboostSlowBinIdfX.zip xgboostSlowBinIdfX.csv')
 
 #Combined submission
 sampleSubmissionFile$prediction <- apply(cbind(apply(predictionsGLMNET, 1, mean), xgboostPrediction), 1, mean)
