@@ -15,6 +15,6 @@ https://github.com/h2oai/h2o-3/blob/master/h2o-docs/src/product/upgrade/Migratio
 
 ##EDA 
 Repeated Cross Validation Performance of the model. approximately 0.927, top 25% code.
-![Imgur](http://i.imgur.com/QrlhkVZ.png)
+![Imgur](http://i.imgur.com/GazfQBt.png)
 Variable Importance of the top 50 variables of the best model.
 ![Imgur](http://i.imgur.com/6H1XVJe.png)
