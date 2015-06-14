@@ -11,8 +11,6 @@ are functions used to mine the data. They extract statistical dispersion feature
 
 WARNING: This code contains the xgboost library which is not currently hosted by CRAN. Please refer to their website for instalation instructions https://github.com/dmlc/xgboost
 
-https://github.com/h2oai/h2o-3/blob/master/h2o-docs/src/product/upgrade/Migration.md
-
 ##EDA 
 Repeated Cross Validation Performance of the model. approximately 0.927, top 25% code.
 ![Imgur](http://i.imgur.com/GazfQBt.png)
